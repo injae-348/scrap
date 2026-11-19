@@ -58,18 +58,21 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] 모바일(375px)과 데스크톱(1280px)에서 모두 확인 (브라우저 에뮬레이션. 실기기 아이폰은 Phase 6)
 - [x] 디자인 확정 후 다음 단계로 (2026-11-19 확정, API.md v1 확정, QA: `docs/reviews/qa-1-20261119.md`)
 - [x] CI(검사만): PR마다 프론트 린트·타입체크·빌드 (`.github/workflows/ci.yml`)
-- [ ] CI가 한 번 돈 뒤 ruleset `rule`에 "Require status checks to pass"로 CI 잡 `frontend` 추가 (사용자가 GitHub에서 설정 — PR #2 병합 후)
+- [x] CI가 한 번 돈 뒤 ruleset `rule`에 "Require status checks to pass"로 CI 잡 `frontend` 추가 (사용자가 GitHub에서 설정 — PR #2 병합 후)
 
 ### Phase 2. 서버 준비
-- [ ] 서버 아키텍처 확인 (`uname -m`: x86_64 / aarch64) → Docker 이미지 플랫폼 결정
-- [ ] 기존 서비스 백업 후 제거 (기존 Caddy 포함 — 설정 파일만 백업해 두고 중지·삭제해서 80/443 포트 비우기)
-- [ ] Docker 설치
-- [ ] **DuckDNS 설정** (아래 "도메인 (DuckDNS)" 참고): 서브도메인 발급 → 서버 공인 IP 연결 → IP 자동 갱신 cron
-- [ ] 배포 전용 사용자(`deploy`)와 배포 전용 SSH 키 생성 (아래 "CI/CD 설계" 참고)
+> 서버 현황(2026-11-19 사용자 확인): Ubuntu 24.04, OCI E2.1.Micro(x86_64 → 이미지 `linux/amd64`), 스왑 2GB·Docker·80/443 개방·DuckDNS 도메인·기존 Caddy HTTPS가 이미 있음. 절차: `deploy/README.md`
+- [x] 서버 아키텍처 확인 (`uname -m` = x86_64)
+- [x] 스왑 2GB, Docker 설치, OCI 보안 목록·iptables 80/443 개방 (기존에 완료)
+- [x] DuckDNS 서브도메인 발급·서버 IP 연결 (기존 도메인 재사용)
+- [ ] 서버 현황 확인 결과 공유 (README 1단계)
+- [ ] 기존 컨테이너·Caddy 백업 후 중지 (80/443 비우기) — 삭제는 새 HTTPS 확인 뒤
+- [ ] DuckDNS IP 자동 갱신 cron (토큰 파일 600)
+- [ ] 배포 전용 사용자(`deploy`)와 배포 전용 SSH 키 등록 (아래 "CI/CD 설계" 참고)
 - [ ] Docker Compose 구성 (api + web), 앱 디렉터리 `/opt/scrap-app`
-- [ ] web 컨테이너(Caddy + 프론트 + `/api` 리버스 프록시)로 DuckDNS 도메인 HTTPS 발급 확인 — 인증서 저장 디렉터리(`/data`)는 볼륨으로 유지
 - [ ] 서버의 `.env`는 서버에서 직접 작성 (저장소·CI에 넣지 않음)
-- [ ] 첫 확인: 임시 정적 페이지로 `https://<이름>.duckdns.org` 접속 성공
+- [ ] 첫 확인: 임시 페이지(bootstrap)로 새 web Caddy가 `https://<이름>.duckdns.org` 인증서 발급 — 인증서 디렉터리(`/data`)는 볼륨으로 유지
+- [ ] 기존 이미지·컨테이너 정리 (볼륨은 데이터 확인 후)
 
 ### Phase 3. CI/CD 파이프라인
 - [ ] CI 확장: 백엔드 pytest + 프론트 빌드를 PR마다 실행
