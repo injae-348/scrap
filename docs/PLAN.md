@@ -77,14 +77,14 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] (사용자, 권장) 서버 접속용 개인 SSH 키 교체 — 다른 저장소 시크릿에 올라갔던 키이므로
 
 ### Phase 3. CI/CD 파이프라인
-> 시작 전에 정할 것 (Phase 2 QA, `docs/reviews/qa-2-20261119.md`):
-> 1. 서버 파일(compose, `deploy.sh`) 갱신 방식 — 모두 root 소유이고 `deploy`에 sudo가 없음
-> 2. api 컨테이너 UID = `APP_UID`(10001)로 고정 (서버 `data/` 소유자와 일치)
-> 3. 배포 직전 DB 백업 방식 — `data/`가 700이라 호스트 `deploy`가 못 읽음 → 컨테이너 안에서 백업
-> 4. 롤백용 현재·직전 SHA를 별도 상태 파일에 기록
-> 5. uvicorn `--proxy-headers` + `--forwarded-allow-ips`를 web 컨테이너 대역으로 한정 (로그인 실패 제한·Secure 쿠키)
-> 6. 배포 후 헬스체크는 Caddy를 거친 `https://<도메인>/api/health`
-> 7. GHCR 이미지 공개 여부와 서버 `deploy`의 pull 인증
+> 결정 사항 (2026-11-19 사용자 확정, 근거: Phase 2 QA `docs/reviews/qa-2-20261119.md`):
+> 1. **서버 파일(compose, `deploy.sh`)은 사람이 수동 갱신.** 배포 스크립트는 이미지 태그만 바꾼다. 서버 파일을 바꾸는 PR은 설명에 "🖐 서버 파일 갱신 필요"를 표시하고, 병합 후 사용자가 `deploy/README.md`의 갱신 절차(`sudo install`)를 실행한 뒤 배포를 승인한다.
+> 2. **api 컨테이너 UID = 10001 고정** (`backend/Dockerfile`, 서버 `data/` 소유자와 일치).
+> 3. **배포 직전 DB 백업은 api 컨테이너 안에서** (Python `sqlite3` backup API) 실행하고 결과를 호스트 `backups/`로 꺼낸다. DB나 컨테이너가 없으면(첫 배포) 건너뛴다.
+> 4. **롤백 상태는 `/opt/scrap-app/state/`** (deploy 소유)에 현재·직전 SHA를 기록. `.env`의 `IMAGE_TAG`는 건드리지 않는다.
+> 5. **compose 고정 네트워크(서브넷 고정) + web 고정 IP**, uvicorn `--proxy-headers --forwarded-allow-ips=<web IP>`로 web만 신뢰.
+> 6. **배포 후 헬스체크는 실제 도메인 HTTPS** `https://<도메인>/api/health` (Caddy·인증서·프록시까지 검증). 실패 시 직전 SHA로 롤백.
+> 7. **GHCR 이미지 공개.** 서버 `docker login` 불필요. 첫 push 후 사용자가 패키지 2개를 공개로 전환. 이미지에 비밀값이 들어가지 않게 `.dockerignore`로 막는다.
 - [ ] CI 확장: 백엔드 pytest + 프론트 빌드를 PR마다 실행
 - [ ] CD: `main` 병합 시 이미지 빌드 → GHCR push → 서버 배포 (`.github/workflows/deploy.yml`)
 - [ ] GitHub Environment `production` + 배포 전 수동 승인(본인)
@@ -94,7 +94,8 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 ### Phase 4. 인증
 - [ ] 최초 가입, TOTP 등록, 복구 코드
 - [ ] 로그인(비밀번호 → TOTP), 세션 쿠키, 로그아웃, 전체 로그아웃, 기기 목록
-- [ ] 로그인 실패 제한
+- [ ] 로그인 실패 제한 (공통 요청 제한 미들웨어로 만들어 인증 없는 `/api/health`에도 적용 검토)
+- [ ] `SESSION_SECRET`이 `.env.example` 자리표시자이거나 너무 짧으면 앱 기동 거부
 - [ ] security-reviewer 검토 및 조치
 
 ### Phase 5. 스크랩 API
@@ -115,6 +116,7 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 ### Phase 8. 운영
 - [ ] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업
 - [ ] 운영 절차 문서화 (`deploy/README.md`: 수동 롤백, 백업 복원, 비밀값 교체)
+- [ ] CI 배포 키 정기 교체 절차, GHCR 옛 이미지 보존 기간 정책
 
 ## 도메인 (DuckDNS)
 
@@ -171,16 +173,18 @@ main 병합
 - 배포 대상 커밋 SHA는 SSH 명령 인자로 넘기고(`SSH_ORIGINAL_COMMAND`), 스크립트는 SHA 형식(16진수 40자)만 허용한다.
 - OCI 보안 목록에서 22번 포트를 열어 두되 비밀번호 로그인은 끈다.
 
-### GitHub Secrets
+### GitHub `production` Environment 시크릿
+(저장소 시크릿이 아니라 Environment 시크릿 — 승인 전에는 배포 잡도 읽을 수 없다)
+
 | 이름 | 내용 |
 |---|---|
-| `DEPLOY_HOST` | `<이름>.duckdns.org` 또는 서버 IP |
+| `DEPLOY_HOST` | `<이름>.duckdns.org` (IP 대신 도메인 — 배포 후 외부 헬스체크에도 쓰고, 공개 Actions 로그에서 `***`로 가려진다) |
 | `DEPLOY_USER` | `deploy` |
 | `DEPLOY_SSH_KEY` | CI 전용 개인 키 |
-| `DEPLOY_KNOWN_HOSTS` | 서버 호스트 키 (`ssh-keyscan` 결과) — 중간자 공격 방지 |
+| `DEPLOY_KNOWN_HOSTS` | `<도메인> ssh-ed25519 AAAA...` 한 줄 — 서버에서 직접 읽은 호스트 키 (`deploy/README.md` 5-4, 중간자 공격 방지) |
 
 - GHCR push는 워크플로의 기본 `GITHUB_TOKEN`(`packages: write`)을 사용한다.
-- 서버의 GHCR pull은 **읽기 전용** 토큰(`read:packages`)으로 서버에서 한 번 `docker login` 해 둔다.
+- GHCR 패키지(`scrap-api`, `scrap-web`)는 **공개**라 서버는 로그인 없이 pull한다 (Phase 3 결정 7). 이미지에 비밀값이 들어가지 않게 `.dockerignore`로 막는다.
 - `ANTHROPIC_API_KEY` 등 앱 비밀값은 GitHub에 넣지 않고 서버 `.env`에만 둔다.
 
 ### 수동 승인

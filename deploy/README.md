@@ -1,7 +1,20 @@
-# 서버 작업 문서 (Phase 2: 서버 준비)
+# 서버 작업 문서 (Phase 2 서버 준비 · Phase 3 CI/CD)
 
-사람이 서버에서 직접 실행하는 절차서다. **위에서부터 순서대로** 복사해 실행한다.
+사람이 서버(와 GitHub 화면)에서 직접 실행하는 절차서다. **위에서부터 순서대로** 복사해 실행한다.
 AI(마스터·서브에이전트)는 서버에 접속하지 않는다. "결과를 마스터에게" 라고 적힌 단계는 출력을 마스터에게 전달한다.
+
+- 1~10: Phase 2 서버 준비 (2026-11-19 완료, 기록용)
+- **11: 서버 파일 갱신 절차** — 저장소의 서버 파일(compose, `deploy.sh` 등)이 바뀔 때마다
+- **12: Phase 3 첫 자동 배포** — GitHub `production` 설정, 첫 배포, 배포 후 확인, 수동 롤백
+
+### 확인 명령(✅/❌) 쓰는 법
+
+11·12절의 확인 블록은 결과를 `✅`/`❌` 줄로 판정한다. 출력 전체를 붙일 필요 없이 **❌ 줄만** 마스터에게 알린다.
+비밀값(토큰·키·`.env` 값)은 판정 줄에도 출력하지 않는다. 새 터미널을 열 때마다 아래 한 줄을 먼저 붙여넣는다.
+
+```bash
+chk() { local m=$1; shift; if "$@" >/dev/null 2>&1; then echo "✅ $m"; else echo "❌ $m"; fi; }
+```
 
 ## 읽기 전에
 
@@ -28,9 +41,11 @@ AI(마스터·서브에이전트)는 서버에 접속하지 않는다. "결과�
 | 8 | 임시 페이지로 새 web Caddy HTTPS 발급 확인 (실패 시 복구) | 계속 | 쉬움 |
 | 9 | ⚠️ 정리: 옛 이미지 5개, 볼륨 5개(`conversation_*`, `caddy-test_*`), `/home/ubuntu/conversation` 삭제 | — | **어려움** |
 | 10 | 문제 해결 (인증서 발급 실패) | — | — |
+| 11 | 서버 파일 갱신 절차 (`git pull` + `sudo install`) — 서버 파일이 바뀐 PR 병합 후마다 | 없음 | 쉬움 (이전 커밋으로 다시 설치) |
+| 12 | Phase 3: `production` Environment·시크릿 → 첫 배포·패키지 공개 → 확인 → 필수 검사 → 수동 롤백 | 첫 배포로 **사이트 재개** | 쉬움 (12-6) |
 
 > 순서 메모: 사이트가 꺼지는 시간을 줄이려고, 준비(3~6)를 모두 끝낸 뒤 7(기존 앱 중지)과 8(새 Caddy 발급)을 **이어서** 한다.
-> 8단계 끝에서 임시 구성을 내리므로, 사이트는 Phase 3 첫 배포 전까지 꺼져 있다. 이 점이 괜찮을 때 7단계를 시작한다.
+> 8단계 끝에서 임시 구성을 내리므로, 사이트는 Phase 3 첫 배포(12-3) 전까지 꺼져 있다.
 
 ---
 
@@ -114,7 +129,7 @@ sudo passwd -S deploy
 compose 파일은 이 폴더들을 **절대경로**로 붙이고, 폴더가 없으면 Docker가 대신 만들지 않고 오류로 멈추게 해 두었다 (`create_host_path: false`). 그래서 여기서 소유권까지 맞춰 만들어야 한다.
 
 ```bash
-APP_UID=10001     # api 컨테이너 실행 UID. Phase 3 Dockerfile에서 확정되면 그 값으로 (다르면 아래 chown만 다시)
+APP_UID=10001     # api 컨테이너 실행 UID (backend/Dockerfile·docker-compose.yml 에서 10001로 고정)
 
 # 스크립트·설정: root 소유 (deploy가 고칠 수 없음)
 sudo install -d -m 755 -o root   -g root   /opt/scrap-app /opt/scrap-app/deploy /opt/scrap-app/caddy
@@ -122,8 +137,8 @@ sudo install -d -m 755 -o root   -g root   /opt/scrap-app /opt/scrap-app/deploy 
 sudo install -d -m 700 -o "$APP_UID" -g "$APP_UID" /opt/scrap-app/data
 # Caddy 인증서·설정: caddy 공식 이미지는 root로 실행 → root 소유, 인증서 개인키가 있으므로 700
 sudo install -d -m 700 -o root   -g root   /opt/scrap-app/caddy/data /opt/scrap-app/caddy/config
-# 백업·로그·DuckDNS 토큰: deploy 사용자(배포 스크립트·cron)가 쓴다
-sudo install -d -m 750 -o deploy -g deploy /opt/scrap-app/backups /opt/scrap-app/logs
+# 백업·로그·배포 상태·DuckDNS 토큰: deploy 사용자(배포 스크립트·cron)가 쓴다
+sudo install -d -m 750 -o deploy -g deploy /opt/scrap-app/backups /opt/scrap-app/logs /opt/scrap-app/state
 sudo install -d -m 700 -o deploy -g deploy /opt/scrap-app/duckdns
 
 sudo ls -la /opt/scrap-app /opt/scrap-app/caddy
@@ -139,19 +154,20 @@ sudo ls -la /opt/scrap-app /opt/scrap-app/caddy
 ├── .env                        deploy   600   서버에서 직접 작성 (6단계)
 ├── deploy/                     root     755   스크립트 (deploy가 고칠 수 없음)
 │   ├── duckdns-update.sh                755
-│   ├── deploy.sh                        755   (Phase 3)
+│   ├── deploy.sh                        755   배포 스크립트 (CI 키의 강제 명령, 11절로 설치)
 │   └── bootstrap/                             8단계 임시 구성
 ├── data/                       APP_UID  700   SQLite → api 컨테이너 /data
 ├── caddy/                      root     755
 │   ├── data/                   root     700   인증서·ACME 계정 → web 컨테이너 /data  (절대 지우지 않음)
 │   └── config/                 root     700   Caddy 자동 설정 → web 컨테이너 /config
-├── backups/                    deploy   750   DB 백업 (Phase 3·8)
+├── backups/                    deploy   750   predeploy-*.db (600, 배포 직전 자동 백업, 최근 14개) · Phase 8 정기 백업
 ├── logs/                       deploy   750   duckdns.log, deploy.log
+├── state/                      deploy   750   current, previous (운영 중·직전 커밋 SHA), deploy.lock — deploy.sh만 쓴다
 ├── duckdns/                    deploy   700   token(600), domain
-└── src/                        root           저장소 사본 (파일 설치용)
+└── src/                        root           저장소 사본 (파일 설치용, 11절)
 ```
 
-> `data/`를 APP_UID 전용(700)으로 두므로, 배포 직전 DB 백업을 호스트의 `deploy` 사용자가 어떻게 읽을지(컨테이너 안에서 백업 등)는 Phase 3 `deploy.sh`에서 정한다.
+> `data/`는 APP_UID 전용(700)이라 호스트의 `deploy`는 읽지 못한다. 그래서 배포 직전 DB 백업은 `deploy.sh`가 **api 컨테이너 안에서** Python `sqlite3` backup API로 만들고 표준출력으로 꺼내 `backups/`에 저장한다.
 
 ### 3-3. 저장소 파일 설치
 
@@ -159,7 +175,7 @@ sudo ls -la /opt/scrap-app /opt/scrap-app/caddy
 
 ```bash
 REPO_URL="https://github.com/injae-348/scrap.git"
-BRANCH="main"      # Phase 2 PR이 아직 병합 전이면 "feat/phase2-server"
+BRANCH="main"
 
 sudo git clone --depth 1 --branch "$BRANCH" "$REPO_URL" /opt/scrap-app/src
 
@@ -176,7 +192,7 @@ sudo logrotate -d /etc/logrotate.d/scrap-app 2>&1 | tail -n 5
 
 **확인:** 파일이 위 구조대로 있고, `logrotate -d`(시험 실행) 출력에 `error`가 없다.
 
-> 저장소에서 이 파일들이 바뀌면 `sudo git -C /opt/scrap-app/src pull --ff-only` 후 위 `install` 줄을 다시 실행한다. (Phase 3에서 갱신 방식을 정리한다.)
+> 이후 저장소에서 서버 파일이 바뀌면 **11절(서버 파일 갱신 절차)**을 실행한다. `deploy.sh`도 11절에서 설치한다.
 
 ---
 
@@ -237,7 +253,7 @@ curl -4s https://checkip.amazonaws.com                                        # 
 
 ## 5. CI 전용 SSH 키 등록, SSH 설정 점검
 
-> 배포 스크립트(`deploy.sh`)는 Phase 3에서 만든다. **지금은 공개키를 강제 명령과 함께 등록만** 하고, 실제 접속 동작은 Phase 3에서 확인한다 (지금 이 키로 접속하면 스크립트가 없어 실패하는 것이 정상).
+> Phase 2에서는 공개키를 강제 명령과 함께 **등록만** 했다 (2026-11-19 완료). `deploy.sh`는 11절에서 설치하고, 이 키의 실제 접속은 12-2 (c)에서 확인한다. `deploy.sh` 설치 전에는 이 키로 접속하면 실패하는 것이 정상이다.
 
 ### 5-1. 키 생성 — **사용자 PC에서** (서버 아님)
 
@@ -292,7 +308,7 @@ sudo sshd -T | grep -Ei '^(passwordauthentication|kbdinteractiveauthentication|p
 
 ### 5-4. (Phase 3 준비) 서버 호스트 키 확인
 
-Phase 3 시크릿 `DEPLOY_KNOWN_HOSTS`에 쓸 값이다. 서버에서 직접 읽으므로 중간자 공격 걱정이 없다. 지금은 확인만 한다.
+Phase 3 시크릿 `DEPLOY_KNOWN_HOSTS`에 쓸 값이다. 서버에서 직접 읽으므로 중간자 공격 걱정이 없다. 지금은 확인만 한다 (실제 등록은 12-2 (b)).
 
 ```bash
 sudo cat /etc/ssh/ssh_host_ed25519_key.pub
@@ -448,6 +464,8 @@ sudo ss -tlnp | grep -E ':(80|443)\b' || echo "80/443 비어 있음"
 
 ### 7-6. (선택) 데이터 백업 (멈춘 상태에서)
 
+> **실행 기록 (2026-11-19):** 생략함 (기존 앱 데이터 불필요 — 사용자 결정). 그래서 9-1, 9-6도 해당 없음.
+
 **선택 단계다.** 기존 앱 데이터는 필요 없지만, 9단계에서 지우기 전에 혹시 몰라 남겨 두는 용도다. 건너뛰어도 8단계로 갈 수 있다.
 
 **무엇을:** 볼륨 3개는 읽기 전용으로 붙인 임시 `alpine` 컨테이너로 tar하고, `/home/ubuntu/conversation/`(compose 파일·Caddyfile·`.env`가 있을 수 있음)를 tar한다. 모든 백업 파일은 **root 소유, 권한 600**.
@@ -572,6 +590,8 @@ sudo ss -tlnp | grep -E ':(80|443)\b'
 
 ### 9-1. (선택) 백업을 PC로 복사
 
+> **실행 기록 (2026-11-19):** 해당 없음 (7-6 백업을 생략함).
+
 7-6 백업을 했고 서버 밖에도 두고 싶을 때만. 서버에서:
 
 ```bash
@@ -643,6 +663,8 @@ crontab -l                                           # 7-3에서 본 줄이 conv
 
 ### 9-6. (선택) 백업 파일 삭제
 
+> **실행 기록 (2026-11-19):** 해당 없음 (7-6 백업을 생략함).
+
 7-6에서 만든 서버 백업이 더는 필요 없으면 지운다 (9-1로 PC에 옮겼다면 PC 사본은 그대로 둔다).
 
 ```bash
@@ -706,9 +728,285 @@ staging 인증서는 브라우저가 신뢰하지 않으므로(경고가 정상)
 
 ---
 
-## 다음 (Phase 3에서 할 서버 작업 예고)
 
-- GHCR 이미지 pull용 읽기 전용 토큰(`read:packages`)으로 `deploy` 사용자에서 `docker login ghcr.io` 한 번
-- `deploy/deploy.sh` 설치 후 5단계 키로 배포 접속 확인
-- api 컨테이너 실행 UID가 `10001`이 아니면 `sudo chown <UID>:<UID> /opt/scrap-app/data`
-- 배포 직전 DB 백업 방식 확정 (`data/`가 APP_UID 전용이므로)
+## 11. 서버 파일 갱신 절차 (저장소의 서버 파일이 바뀌었을 때)
+
+**왜 사람이 하나:** 서버 파일은 root 소유이고 `deploy` 사용자에게는 sudo가 없다. 배포(`deploy.sh`)는 **이미지 태그만** 바꾸고 이 파일들을 고치지 않는다. 그래서 CI 키가 새어도 서버 구성·배포 스크립트는 바꿀 수 없다.
+
+| 서버 파일 | 설치 위치 | 소유·권한 |
+|---|---|---|
+| `docker-compose.yml` | `/opt/scrap-app/docker-compose.yml` | root 644 |
+| `deploy/deploy.sh` | `/opt/scrap-app/deploy/deploy.sh` | root 755 |
+| `deploy/duckdns-update.sh` | `/opt/scrap-app/deploy/duckdns-update.sh` | root 755 |
+| `deploy/logrotate.conf` | `/etc/logrotate.d/scrap-app` | root 644 |
+
+**규칙**
+
+- 위 파일을 바꾸는 PR은 설명 맨 위에 **"🖐 서버 파일 갱신 필요"**를 표시한다 (`deploy.yml`·`deploy.sh`를 바꾸면 "⚠️ 배포 경로 변경"도 함께).
+- 그런 PR을 병합하면 Actions의 Deploy 실행이 승인 대기(Waiting)에서 멈춘다. **승인 전에** 아래 11-1, 11-2를 실행한다.
+- 이미지 롤백(태그 되돌리기)은 compose 파일을 되돌리지 않는다. compose를 바꿀 때는 직전 이미지와도 동작하게 만든다.
+
+### 11-1. 갱신 (몇 번을 실행해도 같은 결과)
+
+```bash
+sudo git -C /opt/scrap-app/src pull --ff-only
+
+sudo install -m 644 -o root -g root /opt/scrap-app/src/docker-compose.yml       /opt/scrap-app/docker-compose.yml
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/deploy.sh         /opt/scrap-app/deploy/deploy.sh
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/duckdns-update.sh /opt/scrap-app/deploy/duckdns-update.sh
+sudo install -m 644 -o root -g root /opt/scrap-app/src/deploy/logrotate.conf    /etc/logrotate.d/scrap-app
+# 배포 상태 폴더 (Phase 3에서 추가. 이미 있으면 그대로)
+sudo install -d -m 750 -o deploy -g deploy /opt/scrap-app/state
+```
+
+### 11-2. 확인
+
+```bash
+S=/opt/scrap-app/src; A=/opt/scrap-app
+chk "저장소 사본이 main 브랜치"           test "$(sudo git -C $S rev-parse --abbrev-ref HEAD)" = main
+chk "저장소 사본이 origin/main 과 같음"    test "$(sudo git -C $S rev-parse HEAD)" = "$(sudo git -C $S rev-parse origin/main)"
+chk "compose 설치본 = 저장소"             sudo cmp -s $S/docker-compose.yml $A/docker-compose.yml
+chk "deploy.sh 설치본 = 저장소"           sudo cmp -s $S/deploy/deploy.sh $A/deploy/deploy.sh
+chk "duckdns-update.sh 설치본 = 저장소"   sudo cmp -s $S/deploy/duckdns-update.sh $A/deploy/duckdns-update.sh
+chk "logrotate 설치본 = 저장소"           sudo cmp -s $S/deploy/logrotate.conf /etc/logrotate.d/scrap-app
+chk "compose root 644"                   test "$(sudo stat -c '%U %a' $A/docker-compose.yml)" = "root 644"
+chk "deploy.sh root 755"                 test "$(sudo stat -c '%U %a' $A/deploy/deploy.sh)" = "root 755"
+chk "state/ deploy 750"                  test "$(sudo stat -c '%U %a' $A/state)" = "deploy 750"
+chk "deploy.sh 문법"                      bash -n $A/deploy/deploy.sh
+chk "compose 구성 유효 (deploy 권한으로)"  sudo -u deploy -H docker compose -f $A/docker-compose.yml config -q
+chk "logrotate 설정 유효"                 sudo logrotate -d /etc/logrotate.d/scrap-app
+```
+
+❌가 있으면 그 줄을 마스터에게 알린다. (`compose 구성 유효`는 `.env`를 읽지만 값은 출력하지 않는다.)
+
+---
+
+## 12. Phase 3: 첫 자동 배포
+
+흐름: `main` 병합 → Actions **Deploy** 실행: `test`(검사 재실행) → `build`(이미지 2개 GHCR push, 태그 = 커밋 SHA) → **승인 대기** → 승인하면 `deploy`가 `ssh deploy@서버 <SHA>` → 서버의 `deploy.sh`가 DB 백업 → pull → 교체 → `https://<이름>.duckdns.org/api/health` 확인 → 실패 시 직전 버전으로 자동 롤백.
+
+순서가 중요하다: **12-1은 이 PR 병합 전에** 한다 (Environment가 없는 채로 배포 잡이 시작되면 GitHub이 승인 규칙 없는 빈 Environment를 자동으로 만들어 버린다).
+
+### 12-0. 서버 요구 사항 확인 (읽기 전용)
+
+```bash
+chk "Docker Engine 25 이상 (healthcheck start_interval)" sh -c 'v=$(sudo docker version -f "{{.Server.Version}}"); [ "${v%%.*}" -ge 25 ]'
+chk "Docker Compose 2.24 이상 (env_file path/required)"  sh -c 'v=$(sudo docker compose version --short); v=${v#v}; M=${v%%.*}; r=${v#*.}; m=${r%%.*}; [ "$M" -gt 2 ] || { [ "$M" -eq 2 ] && [ "$m" -ge 24 ]; }'
+chk "curl·flock 있음"                  sh -c 'command -v curl && command -v flock'
+chk "deploy 가 docker 그룹"            sh -c 'id -nG deploy | grep -qw docker'
+chk "80/443 비어 있음 (사이트 꺼진 상태)" sh -c '! sudo ss -tln | grep -qE ":(80|443)\b"'
+chk "인증서 폴더에 bootstrap 인증서 있음"  sh -c 'sudo find /opt/scrap-app/caddy/data/caddy/certificates -name "*.crt" | grep -q .'
+chk "data/ 소유 10001, 700"            test "$(sudo stat -c '%u %a' /opt/scrap-app/data)" = "10001 700"
+```
+
+### 12-1. GitHub `production` Environment와 시크릿 (PR 병합 **전**)
+
+**(a) Environment 만들기** — 저장소 → Settings → Environments → **New environment** → 이름 `production` → Configure environment
+
+- **Required reviewers**: 체크하고 본인 추가. **Prevent self-review는 체크하지 않는다** (혼자 쓰는 저장소라 체크하면 본인이 승인할 수 없다).
+- **Deployment branches and tags**: `Selected branches and tags` → Add deployment branch or tag rule → `main` 만 추가.
+- Save protection rules.
+
+**(b) 시크릿 값 준비** — 4개 모두 **Environment secrets**(production 화면 아래쪽)에 넣는다. Repository secrets에는 넣지 않는다 (승인 전에는 읽히지 않게).
+
+| 이름 | 값 |
+|---|---|
+| `DEPLOY_HOST` | `<이름>.duckdns.org` — IP가 아니라 **도메인**으로 (배포 후 외부 헬스체크에도 쓰고, 아래 known_hosts의 주소와 같아야 한다) |
+| `DEPLOY_USER` | `deploy` |
+| `DEPLOY_SSH_KEY` | 5-1에서 만든 **개인키** `~/.ssh/scrap_ci_deploy` 파일 내용 전체 (`-----BEGIN ...`부터 `-----END ...-----`까지) |
+| `DEPLOY_KNOWN_HOSTS` | 서버 호스트 키 한 줄: `<이름>.duckdns.org ssh-ed25519 AAAA...` (아래 명령으로 만든다) |
+
+`DEPLOY_SSH_KEY` — PC(Mac)에서 화면에 띄우지 않고 클립보드로 복사:
+
+```bash
+pbcopy < ~/.ssh/scrap_ci_deploy     # GitHub 입력칸에 붙여넣고 저장한 뒤
+pbcopy < /dev/null                  # 클립보드 비우기
+```
+
+`DEPLOY_KNOWN_HOSTS` — 서버에서 (호스트 **공개**키라 화면에 나와도 괜찮다. 저장소·채팅에는 붙이지 않는다):
+
+```bash
+D=$(sudo cat /opt/scrap-app/duckdns/domain); D="${D%.duckdns.org}.duckdns.org"
+printf '%s %s\n' "$D" "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
+```
+
+출력 한 줄을 그대로 `DEPLOY_KNOWN_HOSTS`에 넣고, PC 메모장 등에 잠시 둔다 (12-2 (c)에서 쓴다).
+
+**(c) 확인 (PC, `gh` CLI가 로그인돼 있을 때)** — 없으면 화면에서 위 항목을 눈으로 확인한다.
+
+```bash
+R=injae-348/scrap
+chk "production: 필수 승인자 있음"   sh -c "gh api repos/$R/environments/production --jq '[.protection_rules[].type] | index(\"required_reviewers\") != null' | grep -qx true"
+chk "production: 배포 브랜치 제한"   sh -c "gh api repos/$R/environments/production --jq '.deployment_branch_policy.custom_branch_policies' | grep -qx true"
+chk "production: 브랜치 규칙 = main" sh -c "gh api repos/$R/environments/production/deployment-branch-policies --jq '[.branch_policies[].name] == [\"main\"]' | grep -qx true"
+chk "production: 시크릿 4개"         sh -c "gh api repos/$R/environments/production/secrets --jq '[.secrets[].name | select(test(\"^DEPLOY_(HOST|USER|SSH_KEY|KNOWN_HOSTS)\$\"))] | length' | grep -qx 4"
+chk "Repository 시크릿에 DEPLOY_* 없음" sh -c "gh api repos/$R/actions/secrets --jq '[.secrets[].name | select(startswith(\"DEPLOY_\"))] | length' | grep -qx 0"
+```
+
+### 12-2. PR 병합 → 서버 파일 갱신 → CI 키 접속 확인
+
+**(a)** PR을 병합한다 (사용자). Actions → **Deploy** 실행이 시작되고, `test`·`build`가 끝나면 `deploy`가 **Waiting**(승인 대기)에서 멈춘다. **아직 승인하지 않는다.**
+
+**(b)** 서버에서 **11절**(11-1 갱신, 11-2 확인)을 실행한다. 이 PR로 `deploy.sh`와 `state/`가 처음 생긴다.
+
+**(c)** PC에서 GitHub에 넣은 값과 같은 값으로 CI 키 접속을 시험한다. 잘못된 요청(`ping`)을 보내므로 `deploy.sh`가 **거부만 하고 아무것도 바꾸지 않는다.**
+
+```bash
+H='<이름>.duckdns.org'
+KH='<12-1 (b)에서 만든 DEPLOY_KNOWN_HOSTS 한 줄 그대로>'
+T=$(mktemp -d)
+printf '%s\n' "$KH" > "$T/kh"
+ssh -T -n -i ~/.ssh/scrap_ci_deploy -o IdentitiesOnly=yes -o BatchMode=yes \
+    -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$T/kh" \
+    "deploy@$H" ping > "$T/out" 2>&1; echo "rc=$?" >> "$T/out"
+chk "known_hosts 값으로 호스트 확인 통과"   sh -c "! grep -q 'Host key verification failed' $T/out"
+chk "CI 키 로그인 + 강제 명령(deploy.sh) 실행" grep -q '거부' "$T/out"
+chk "deploy.sh 가 잘못된 요청을 코드 2로 거부" grep -qx 'rc=2' "$T/out"
+rm -rf "$T"
+```
+
+서버에서도 한 줄 확인: `chk "deploy.log 에 거부 기록" sh -c "sudo tail -n 3 /opt/scrap-app/logs/deploy.log | grep -q 거부"`
+
+### 12-3. 첫 배포: 패키지 공개 → 승인
+
+**(a) 이미지가 올라갔는지** — Actions의 Deploy 실행에서 `test`, `build`가 ✅이고 `deploy`가 Waiting이다.
+
+**(b) ⚠️ 패키지 2개를 Public으로 전환 (되돌릴 수 없다)** — GitHub은 공개로 바꾼 패키지를 다시 비공개로 돌릴 수 없다. 이미지에는 앱 코드와 라이브러리만 들어 있고 `.env`·DB·`.git`은 `.dockerignore`로 막혀 있다 (결정 7).
+
+1. GitHub 오른쪽 위 프로필 → **Your profile** → **Packages** 탭 → `scrap-api`
+2. 패키지 화면 오른쪽에 저장소 `scrap`이 연결돼 있는지 본다 (이미지 라벨 `org.opencontainers.image.source`로 자동 연결된다). **Package settings** → "Manage Actions access"에 `scrap` 저장소가 있는지 본다.
+3. 같은 Package settings 아래 **Danger Zone → Change visibility → Public** → 패키지 이름을 입력해 확인
+4. `scrap-web`도 1~3을 반복한다.
+
+서버에서 로그인 없이 받을 수 있는지 확인 (`deploy` 사용자, 내려받지 않고 목록만 조회):
+
+```bash
+SHA=$(sudo git -C /opt/scrap-app/src rev-parse HEAD)   # 12-2에서 받은 main 최신 = 이번 배포 커밋
+echo "이번 배포 커밋: ${SHA:0:7}  ← Actions 실행 화면의 커밋과 같은지 눈으로 확인"
+for r in scrap-api scrap-web; do
+  chk "$r 공개 이미지 조회 (로그인 없이)" sudo -u deploy -H docker manifest inspect "ghcr.io/injae-348/$r:$SHA"
+done
+```
+
+**(c) 승인** — Actions → 그 Deploy 실행 → **Review deployments** → `production` 체크 → **Approve and deploy**. `deploy` 잡 로그 끝에 `배포 성공`과 `외부 헬스체크 통과`가 나온다 (첫 배포는 이미지 pull 때문에 2~5분).
+
+실패하면 잡 로그의 `실패:` 줄과 아래를 마스터에게 알린다:
+
+```bash
+sudo tail -n 40 /opt/scrap-app/logs/deploy.log
+sudo docker compose -f /opt/scrap-app/docker-compose.yml ps -a
+sudo docker compose -f /opt/scrap-app/docker-compose.yml logs --tail 60 api web
+```
+
+(첫 배포는 되돌릴 직전 버전이 없어서 실패해도 컨테이너를 그대로 둔다 — 로그를 보기 위해서다. 로그에 도메인이 보이면 가리고 붙인다.)
+
+### 12-4. 배포 후 확인
+
+서버:
+
+```bash
+A=/opt/scrap-app
+SHA=$(sudo git -C $A/src rev-parse HEAD)
+D=$(sudo sed -nE 's/^[[:space:]]*SITE_DOMAIN[[:space:]]*=[[:space:]]*["'"'"']?([^"'"'"' #]+).*/\1/p' $A/.env | tail -n 1)   # 출력하지 않는다
+
+chk ".env 에서 SITE_DOMAIN 읽음"            test -n "$D"
+chk "state/current = 이번 커밋"             test "$(sudo cat $A/state/current)" = "$SHA"
+chk "api healthy"                         sh -c "sudo docker inspect -f '{{.State.Health.Status}}' scrap-app-api-1 | grep -qx healthy"
+chk "web 실행 중"                          sh -c "sudo docker inspect -f '{{.State.Running}}' scrap-app-web-1 | grep -qx true"
+chk "https health 200 (서버 → 로컬 Caddy)"  curl -fs -o /dev/null --resolve "$D:443:127.0.0.1" "https://$D/api/health"
+chk "인증서를 새로 받지 않음 (bootstrap 것 사용)" sh -c "! sudo docker logs scrap-app-web-1 2>&1 | grep -q 'certificate obtained successfully'"
+chk "api 실행 UID 10001"                   sh -c "sudo docker exec scrap-app-api-1 id -u | grep -qx 10001"
+chk "DB 파일 소유 10001 (DB가 있으면)"       sh -c "! sudo test -e $A/data/scrap.db || [ \$(sudo stat -c %u $A/data/scrap.db) = 10001 ]"
+chk "배포 로그에 성공 기록"                  sh -c "sudo tail -n 40 $A/logs/deploy.log | grep -q '배포 성공'"
+chk "배포 로그에 실제 도메인 없음"            sh -c "! sudo grep -qF -- '$D' $A/logs/deploy.log"
+chk "deploy.log 권한 (다른 사용자 읽기 불가)"  sh -c "sudo stat -c %a $A/logs/deploy.log | grep -qE '^6[04]0$'"
+for c in scrap-app-api-1 scrap-app-web-1; do
+  chk "$c 메모리 한도의 80% 미만"            sh -c "sudo docker stats --no-stream --format '{{.MemPerc}}' $c | awk '{exit !(\$1+0 < 80)}'"
+done
+chk "서버 여유 메모리(available) 150MB 이상" sh -c "free -m | awk '/^Mem:/{exit !(\$7 >= 150)}'"
+```
+
+PC (브라우저와 터미널):
+
+- 시크릿 창에서 `https://<이름>.duckdns.org` → "HTTPS 확인용 임시 페이지" 대신 **앱 화면**이 나온다.
+
+```bash
+H='<이름>.duckdns.org'
+chk "외부 /api/health 200"               curl -fs -o /dev/null "https://$H/api/health"
+chk "임시 페이지가 아님"                   sh -c "! curl -fs https://$H/ | grep -q 'HTTPS 확인용 임시 페이지'"
+chk "SPA 경로 새로고침도 200"              curl -fs -o /dev/null "https://$H/settings"
+chk "http → https 리다이렉트"             sh -c "curl -s -o /dev/null -w '%{http_code}' http://$H/ | grep -qE '^30[18]$'"
+chk "보안 헤더(CSP) 있음"                  sh -c "curl -sI https://$H/ | grep -qi '^content-security-policy:'"
+chk "Server 헤더 숨김"                    sh -c "! curl -sI https://$H/api/health | grep -qi '^server:'"
+```
+
+### 12-5. 필수 검사에 `backend` 추가
+
+이 PR에서 CI가 한 번 돌아 `backend`(와 `images`) 검사 이름이 생긴 뒤에 한다.
+
+저장소 → Settings → Rules → Rulesets → `rule` → **Require status checks to pass** → Add checks → `backend` 추가 (`frontend`는 그대로) → Save changes.
+(`images`는 Dockerfile이 빌드되는지 보는 검사다. 필수로 넣어도 되고, PR이 느려지는 게 싫으면 빼 둔다.)
+
+```bash
+R=injae-348/scrap
+id=$(gh api repos/$R/rulesets --jq '.[] | select(.name=="rule") | .id')
+chk "필수 검사에 frontend·backend" sh -c "gh api repos/$R/rulesets/$id --jq '[.rules[] | select(.type==\"required_status_checks\") | .parameters.required_status_checks[].context] | (index(\"frontend\") != null and index(\"backend\") != null)' | grep -qx true"
+```
+
+### 12-6. 수동 롤백·복구 (긴급할 때 사람만)
+
+평소 배포·롤백은 CI가 한다. 자동 롤백: 헬스체크가 실패하면 `deploy.sh`가 배포 직전 운영 버전(`state/current`)으로 되돌리고 실패로 끝난다 (상태 파일은 그대로).
+아래는 **헬스체크는 통과했지만 앱이 잘못 동작할 때**, 또는 **자동 롤백까지 실패했을 때**만 쓴다.
+
+**상태 보기**
+
+```bash
+cd /opt/scrap-app
+sudo cat state/current state/previous        # 위: 운영 중(마지막 성공 배포), 아래: 그 직전
+sudo tail -n 30 logs/deploy.log
+```
+
+**방법 A (권장, GitHub이 될 때)** — Actions → Deploy → **되돌릴 버전의 예전 성공 실행** → `deploy` 잡의 **Re-run this job** → 승인. 같은 `deploy.sh` 경로(백업·헬스체크·상태 기록)를 그대로 탄다. GHCR의 옛 이미지는 지우지 않으므로 언제든 가능하다.
+
+**방법 B (GitHub·SSH 배포가 안 될 때, 서버에서 직접)**
+
+되돌릴 버전 `P`를 고른다:
+- 배포는 성공했는데 앱이 이상하다 → `state/previous`
+- 자동 롤백까지 실패해 사이트가 내려가 있다 → `state/current` (실패한 배포는 상태에 기록되지 않는다)
+
+```bash
+cd /opt/scrap-app
+C=$(sudo cat state/current); P=$(sudo cat state/previous)    # 자동 롤백 실패 경우엔: P=$C
+echo "되돌릴 버전: ${P:0:12}"
+# deploy.sh 와 같은 잠금을 잡는다 → CI 배포가 진행 중이면 겹치지 않고 바로 실패한다.
+sudo -u deploy -H flock -n /opt/scrap-app/state/deploy.lock env IMAGE_TAG="$P" docker compose up -d --remove-orphans
+D=$(sudo sed -nE 's/^[[:space:]]*SITE_DOMAIN[[:space:]]*=[[:space:]]*["'"'"']?([^"'"'"' #]+).*/\1/p' .env | tail -n 1)
+sleep 20
+chk "되돌린 버전 health 200" curl -fs -o /dev/null --resolve "$D:443:127.0.0.1" "https://$D/api/health"
+```
+
+✅이고 `P`가 `state/previous`였다면, 다음 자동 배포가 올바른 버전으로 롤백하도록 상태 파일을 실제 운영 버전에 맞춘다 (`P=$C`였다면 할 필요 없다):
+
+```bash
+sudo -u deploy sh -c "printf '%s\n' '$C' > state/previous && printf '%s\n' '$P' > state/current"
+chk "state/current = 되돌린 버전" test "$(sudo cat state/current)" = "$P"
+```
+
+**⚠️ DB 되돌리기 (새 버전이 DB 구조를 바꿔 옛 버전이 못 읽을 때만)** — 배포 직전 백업은 `backups/predeploy-<UTC 시각>-<운영 중이던 SHA 앞 12자>.db`. 되돌리면 그 백업 이후 저장한 스크랩은 사라지므로, **먼저 현재 DB를 통째로 백업**한다.
+
+```bash
+cd /opt/scrap-app
+sudo ls -l backups/                                        # 쓸 백업 파일 이름 확인
+B=backups/predeploy-<시각>-<sha>.db                        # ← 고른 파일로
+sudo -u deploy -H env IMAGE_TAG="$P" docker compose stop api
+K=/root/db-before-restore-$(date +%Y%m%d%H%M%S); sudo install -d -m 700 "$K"
+sudo sh -c "cp -a /opt/scrap-app/data/. '$K'/"              # 현재 DB(+ -wal, -shm) 백업
+sudo rm -f data/scrap.db-wal data/scrap.db-shm
+sudo install -m 600 -o 10001 -g 10001 "$B" data/scrap.db
+sudo -u deploy -H env IMAGE_TAG="$P" docker compose up -d
+chk "현재 DB 백업 있음" sudo test -s "$K/scrap.db"
+sleep 20
+chk "복원 후 health 200" curl -fs -o /dev/null --resolve "$D:443:127.0.0.1" "https://$D/api/health"
+```
+
+정기 백업·외부 복사·복원 절차 전체는 Phase 8에서 이 문서에 추가한다.

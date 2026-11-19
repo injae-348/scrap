@@ -1,0 +1,5 @@
+# 개발·CI 전용 의존성 (이미지에는 설치하지 않는다).
+-r requirements.txt
+pytest==9.2.0
+httpx==0.28.1
+ruff==0.17.5

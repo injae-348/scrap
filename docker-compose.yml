@@ -1,20 +1,26 @@
 # 운영 구성 (서버의 /opt/scrap-app/docker-compose.yml 로 설치된다)
 #
-# - 이미지는 GitHub Actions가 빌드해 GHCR에 올린다 (Phase 3). 서버에서는 빌드하지 않는다.
-# - IMAGE_TAG = 배포할 커밋 SHA. deploy.sh가 실행할 때 환경변수로 넘긴다
-#   (수동 실행 시에는 /opt/scrap-app/.env 의 IMAGE_TAG 사용).
+# ⚠️ 이 파일은 배포(deploy.sh)가 갱신하지 않는다. 바꾸는 PR은 설명에 "🖐 서버 파일 갱신 필요"를 표시하고,
+#    병합 후 사람이 deploy/README.md 11절(서버 파일 갱신 절차)로 설치한 뒤 배포를 승인한다.
+#    이미지 태그만 바꾸는 롤백은 compose 파일을 되돌리지 않는다 — 이 파일은 옛 이미지와도 호환되게 유지한다.
+#
+# - 이미지는 GitHub Actions가 빌드해 GHCR에 올린다 (공개 패키지 → 서버 docker login 불필요). 서버에서는 빌드하지 않는다.
+# - IMAGE_TAG = 배포할 커밋 SHA. deploy.sh가 명령마다 환경변수로 넘긴다 (셸 환경변수가 .env 보다 우선).
+#   현재·직전 SHA는 /opt/scrap-app/state/{current,previous} 에 기록된다. .env 의 IMAGE_TAG 는 자리표시자(0000...)로 두어,
+#   사람이 태그 없이 pull/up 하면 실패하게 한다 (수동 복구 절차: deploy/README.md 12-6).
 # - 값의 치환(${...})은 같은 디렉터리의 .env 에서 읽는다. .env 는 서버에서만 작성한다 (커밋 금지).
+# - 이미지 이름(ghcr.io/injae-348/scrap-*)은 .github/workflows/deploy.yml 의 push 대상과 같아야 한다.
 #
 # 메모리 예산 (RAM 1GB + 스왑 2GB 서버 기준)
 #   OS + sshd + dockerd/containerd  ≈ 300~350MB
 #   api  : 384MB  FastAPI + uvicorn 1 worker + Anthropic SDK + httpx/trafilatura(lxml).
-#                 평소 100~200MB 예상, AI 채우기 중 본문 파싱 시 일시적으로 늘어나는 것을 감안.
+#                 평소 100~200MB 예상, AI 채우기 중 본문 파싱 시 일시적으로 늘어나는 것을 감안. (tmpfs /tmp 사용량도 포함)
 #   web  : 128MB  Caddy(정적 파일 + 리버스 프록시). 평소 30~60MB.
 #   합계 512MB 상한 → 나머지는 OS·페이지 캐시 몫. 한도를 넘으면 해당 컨테이너만 OOM 종료 후 재시작된다.
 #   (memswap_limit 을 따로 주지 않으면 컨테이너는 mem_limit 만큼 추가로 스왑을 쓸 수 있다.)
 #
 # 데이터 저장: 이름 있는 Docker 볼륨 대신 서버 폴더 bind mount (부트 디스크 사용)
-#   /opt/scrap-app/data          → api  /data    SQLite        (소유: APP_UID, 700)
+#   /opt/scrap-app/data          → api  /data    SQLite        (소유: 10001, 700)
 #   /opt/scrap-app/caddy/data    → web  /data    인증서·ACME 계정 (소유: root, 700 — caddy 공식 이미지는 root로 실행)
 #   /opt/scrap-app/caddy/config  → web  /config  Caddy 자동 설정 (소유: root, 700)
 #   - 경로는 모두 절대경로로 통일한다. 임시 구성(deploy/bootstrap)도 같은 절대경로를 써서,
@@ -22,6 +28,15 @@
 #   - create_host_path: false — 폴더가 없으면 Docker가 root 소유로 몰래 만들지 않고 오류로 멈춘다.
 #     폴더 생성·소유권은 deploy/README.md 3-2 단계에서 한다.
 #   - 폴더라서 `docker volume prune` 같은 Docker 정리 명령에 지워지지 않고, 백업·복원이 파일 복사로 끝난다.
+#
+# 하드닝
+#   - 두 컨테이너 모두 루트 파일시스템 읽기 전용(read_only) + 쓰기는 볼륨과 작은 tmpfs(/tmp)만.
+#   - cap_drop: ALL. web(Caddy)은 80/443 바인딩에 NET_BIND_SERVICE 만 다시 준다.
+#     (Caddy는 root로 실행되지만 인증서 폴더도 root 소유라 CHOWN·DAC_OVERRIDE 가 필요 없다.)
+#   - no-new-privileges, pids_limit, mem_limit.
+#
+# 요구 버전: Docker Engine 25+ (healthcheck start_interval), Docker Compose 2.24+ (env_file path/required).
+#   확인 명령은 deploy/README.md 12-0.
 
 name: scrap-app
 
@@ -29,26 +44,55 @@ services:
   api:
     image: ghcr.io/injae-348/scrap-api:${IMAGE_TAG:?IMAGE_TAG(배포할 커밋 SHA)가 필요합니다}
     restart: unless-stopped
+    # 이미지(backend/Dockerfile)도 10001로 실행하지만, 이미지가 실수로 root가 되어도 막히게 여기서 한 번 더 고정한다.
+    # 서버 /opt/scrap-app/data 의 소유자(10001)와 같아야 한다.
+    user: "10001:10001"
+    # 프록시 헤더(X-Forwarded-For/Proto)는 web 컨테이너의 고정 IP에서 온 것만 믿는다 ("*" 금지).
+    # → 로그인 실패 제한이 실제 클라이언트 IP를 보고, https 판단(Secure 쿠키·리다이렉트)이 맞게 된다.
+    #   Caddy는 클라이언트가 보낸 X-Forwarded-* 를 믿지 않고 자기가 본 주소로 덮어쓴다 (trusted_proxies 미설정).
+    # 값은 아래 networks.app 의 web ipv4_address 와 같아야 한다.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host=0.0.0.0
+      - --port=8000
+      - --workers=1
+      - --proxy-headers
+      - --forwarded-allow-ips=172.30.80.10
+      - --no-server-header
     # 앱 비밀값(ANTHROPIC_API_KEY, SESSION_SECRET 등)은 api 컨테이너에만 전달한다.
     env_file:
       - path: .env
         required: true
+    # DB 경로는 compose가 고정한다 (.env 보다 우선). bind mount(/data)·배포 직전 백업(deploy.sh)과 같은 값이어야 하고,
+    # 서버 .env 에 빠져 있어도 앱 기본값(./data/dev.db, 컨테이너 안 → 재배포 시 사라짐)으로 떨어지지 않게 한다.
+    environment:
+      DB_PATH: /data/scrap.db
     # 외부 포트를 열지 않는다. web(Caddy)이 내부 네트워크에서 api:8000 으로 프록시한다.
     expose:
       - "8000"
+    networks:
+      app: {}
     volumes:
-      # SQLite. api 이미지는 non-root(APP_UID, Phase 3 Dockerfile에서 확정)로 실행되므로 폴더 소유자를 그 UID로 맞춘다.
+      # SQLite. api는 10001로 실행되므로 폴더 소유자를 그 UID로 맞춘다 (deploy/README.md 3-2).
+      # 배포 직전 백업(deploy.sh)도 이 폴더에 임시 파일(.predeploy-backup.tmp)을 만들었다가 지운다.
       - type: bind
         source: /opt/scrap-app/data
         target: /data
         bind:
           create_host_path: false
+    read_only: true
+    tmpfs:
+      # 메모리를 쓰므로(mem_limit에 포함) 작게 둔다. 큰 임시 파일은 /data 에 쓴다.
+      - /tmp:size=32m,mode=1777
+    cap_drop:
+      - ALL
     mem_limit: 384m
     pids_limit: 256
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      # 이미지에 curl 이 없을 수 있으므로 파이썬 표준 라이브러리로 확인한다.
+      # 이미지에 curl 이 없으므로 파이썬 표준 라이브러리로 확인한다. /api/health 는 DB를 열지 못하면 503 → 실패.
       test:
         - CMD
         - python
@@ -57,18 +101,28 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-      start_period: 20s
+      start_period: 30s
+      # 시작 직후(start_period 동안)에는 2초마다 확인 → web 이 빨리 뜬다 (Docker Engine 25+).
+      start_interval: 2s
 
   web:
     image: ghcr.io/injae-348/scrap-web:${IMAGE_TAG:?IMAGE_TAG(배포할 커밋 SHA)가 필요합니다}
     restart: unless-stopped
+    # api 가 healthy 가 된 뒤에 web 을 띄운다 (첫 요청 502 방지).
+    # api 가 unhealthy 가 되면 `docker compose up` 이 실패하고, deploy.sh 는 이를 배포 실패로 보고 롤백한다.
+    # (서버 재부팅 때는 Docker 재시작 정책이 두 컨테이너를 따로 올리므로 이 조건과 무관하다.)
     depends_on:
-      - api
+      api:
+        condition: service_healthy
     ports:
       # 80: Let's Encrypt HTTP-01 확인 + HTTPS 리다이렉트, 443: HTTPS.
       # HTTP/3(443/udp)는 Caddyfile에서 끄고 열지 않는다 (방화벽 규칙 단순화).
       - "80:80"
       - "443:443"
+    networks:
+      app:
+        # 고정 IP: api 의 --forwarded-allow-ips 가 이 주소만 신뢰한다.
+        ipv4_address: 172.30.80.10
     # web 컨테이너에는 앱 비밀값을 넘기지 않고, Caddyfile이 쓰는 값만 넘긴다.
     environment:
       SITE_DOMAIN: "${SITE_DOMAIN:?SITE_DOMAIN(예: <이름>.duckdns.org)이 필요합니다}"
@@ -88,8 +142,30 @@ services:
         target: /config
         bind:
           create_host_path: false
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
     mem_limit: 128m
     pids_limit: 128
     security_opt:
       - no-new-privileges:true
 
+networks:
+  app:
+    # 이름과 서브넷을 고정한다 (web 고정 IP → api 프록시 신뢰 범위).
+    # 172.30.80.0/24 를 고른 이유:
+    #   - OCI VCN 기본 대역(10.0.0.0/16)·집/사무실 공유기(192.168.x.x)와 겹치지 않는다.
+    #   - Docker 기본 브리지(172.17.0.0/16)와 겹치지 않고, Docker가 새 네트워크에 자동 배정하는 172.18~ 대역의
+    #     거의 끝이라 다른 프로젝트 네트워크와 부딪힐 일이 드물다 (이미 있는 네트워크와 겹치면 Docker가 생성 시 오류로 알려 준다).
+    # 바꾸면 api command 의 --forwarded-allow-ips 와 web ipv4_address 도 함께 바꾸고,
+    # 기존 네트워크를 지운 뒤(`docker compose down` 후 `up`) 다시 만들어야 한다.
+    name: scrap-app-net
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.80.0/24
+          gateway: 172.30.80.1
