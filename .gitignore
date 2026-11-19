@@ -1,0 +1,63 @@
+# ⚠️ 공개 저장소입니다. 규칙은 CLAUDE.md의 "공개 저장소 규칙" 참고.
+
+# 비밀값
+.env
+.env.*
+!.env.example
+.envrc
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*_ed25519
+*_ed25519.pub
+*deploy_key*
+known_hosts
+duckdns/
+*token*.txt
+recovery-codes*
+secrets/
+
+# 데이터 (DB, 백업, 로그, 인증서)
+data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+backups/
+*.bak
+logs/
+*.log
+caddy_data/
+caddy_config/
+
+# 보안 리뷰 결과 (조치 전 취약점 공개 방지 — 로컬에만 보관)
+docs/reviews/security-*.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Node
+node_modules/
+frontend/dist/
+frontend/dev-dist/
+*.tsbuildinfo
+coverage/
+
+# OS / 에디터
+.DS_Store
+.vscode/
+.idea/
+
+# Claude Code 개인 설정
+.claude/settings.local.json
+CLAUDE.local.md
