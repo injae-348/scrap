@@ -47,17 +47,18 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 ## 단계별 진행
 
 ### Phase 0. GitHub 저장소
-- [ ] GitHub **공개** 저장소 생성, 첫 커밋 push (규칙: `CLAUDE.md`의 "공개 저장소 규칙")
-- [ ] 커밋 이메일을 GitHub noreply 주소로 설정 (개인 이메일 노출 방지)
-- [ ] 저장소 설정: Secret scanning + Push protection 켜기, 포크 PR 워크플로 실행 시 승인 필요
-- [ ] `main` 브랜치 보호: 직접 push 금지, PR + CI 통과 후에만 병합
-- [ ] 작업 방식: 기능마다 브랜치 → PR → CI 통과 → 사용자 확인 후 병합
+- [x] GitHub **공개** 저장소 생성, 첫 커밋 push (규칙: `CLAUDE.md`의 "공개 저장소 규칙")
+- [x] 커밋 이메일을 GitHub noreply 주소로 설정 (개인 이메일 노출 방지)
+- [x] 저장소 설정: Secret scanning + Push protection 켜기, 포크 PR 워크플로 실행 시 승인 필요
+- [x] `main` 브랜치 보호: 직접 push 금지, PR 필수, 삭제·강제 push 금지 (ruleset `rule`, 필요 승인 0) — CI 필수 검사는 Phase 1에서 추가
+- [x] 작업 방식: 기능마다 브랜치 → PR → CI 통과 → 사용자 확인 후 병합
 
 ### Phase 1. UI 프로토타입
 - [ ] React + Vite + TS 프로젝트 생성, 목(mock) 데이터로 전체 화면 구현
 - [ ] 모바일(375px)과 데스크톱(1280px)에서 모두 확인
 - [ ] 디자인 확정 후 다음 단계로
 - [ ] CI(검사만): PR마다 프론트 린트·타입체크·빌드 (`.github/workflows/ci.yml`)
+- [ ] CI가 한 번 돈 뒤 ruleset `rule`에 "Require status checks to pass"로 CI 잡 추가 (사용자가 GitHub에서 설정)
 
 ### Phase 2. 서버 준비
 - [ ] 서버 아키텍처 확인 (`uname -m`: x86_64 / aarch64) → Docker 이미지 플랫폼 결정
