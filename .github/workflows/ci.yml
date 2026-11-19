@@ -1,0 +1,52 @@
+# PR 검사 전용 워크플로. 배포 단계는 없다 (배포는 deploy.yml에서만).
+# 공개 저장소이므로 pull_request_target은 쓰지 않고, 시크릿도 사용하지 않는다.
+# 경로 필터(paths)는 일부러 쓰지 않는다: 필수 검사로 지정했을 때 검사가 안 돌아 PR이 막히는 것을 막기 위함.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # 같은 PR(또는 같은 브랜치)의 이전 실행은 취소한다.
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    # 필수 검사 이름으로 쓰이므로 바꾸지 않는다.
+    name: frontend
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build

@@ -2,7 +2,7 @@
 name: qa-reviewer
 description: 각 Phase가 끝났을 때 계획 대비 누락, 반응형 레이아웃, 화면 동선, API 명세와 구현의 불일치를 점검할 때 사용. 코드를 수정하지 않고 점검 결과 문서만 작성한다.
 tools: Read, Glob, Grep, Write
-model: haiku
+model: sonnet
 hooks:
   PreToolUse:
     - matcher: "Write|Edit|MultiEdit|NotebookEdit"
