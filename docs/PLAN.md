@@ -65,16 +65,26 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] 서버 아키텍처 확인 (`uname -m` = x86_64)
 - [x] 스왑 2GB, Docker 설치, OCI 보안 목록·iptables 80/443 개방 (기존에 완료)
 - [x] DuckDNS 서브도메인 발급·서버 IP 연결 (기존 도메인 재사용)
-- [ ] 서버 현황 확인 결과 공유 (README 1단계)
-- [ ] 기존 컨테이너·Caddy 백업 후 중지 (80/443 비우기) — 삭제는 새 HTTPS 확인 뒤
-- [ ] DuckDNS IP 자동 갱신 cron (토큰 파일 600)
-- [ ] 배포 전용 사용자(`deploy`)와 배포 전용 SSH 키 등록 (아래 "CI/CD 설계" 참고)
-- [ ] Docker Compose 구성 (api + web), 앱 디렉터리 `/opt/scrap-app`
-- [ ] 서버의 `.env`는 서버에서 직접 작성 (저장소·CI에 넣지 않음)
-- [ ] 첫 확인: 임시 페이지(bootstrap)로 새 web Caddy가 `https://<이름>.duckdns.org` 인증서 발급 — 인증서 디렉터리(`/data`)는 볼륨으로 유지
-- [ ] 기존 이미지·컨테이너 정리 (볼륨은 데이터 확인 후)
+- [x] 서버 현황 확인 결과 공유 (README 1단계)
+- [x] 기존 컨테이너·Caddy 중지 (80/443 비우기) — 기존 앱 데이터 불필요로 백업 생략. 별도 conversation 배포 키는 없었음(사용자 개인 키를 공용) → 서버 키는 유지
+- [x] DuckDNS IP 자동 갱신 cron (토큰 파일 600)
+- [x] 배포 전용 사용자(`deploy`)와 배포 전용 SSH 키 등록 (아래 "CI/CD 설계" 참고)
+- [x] Docker Compose 구성 (api + web), 앱 디렉터리 `/opt/scrap-app` (서버 폴더 bind mount)
+- [x] 서버의 `.env`는 서버에서 직접 작성 (저장소·CI에 넣지 않음)
+- [x] 첫 확인: 임시 페이지(bootstrap)로 새 web Caddy가 `https://<이름>.duckdns.org` 인증서 발급 — 인증서 디렉터리(`/data`)는 볼륨으로 유지
+- [x] 기존 이미지·컨테이너·볼륨·폴더·crontab 정리 (2026-11-19 완료)
+- [ ] (사용자) `conversation` 저장소 Actions 시크릿에서 SSH 개인키·호스트 삭제 — 개인 키가 저장돼 있을 가능성
+- [ ] (사용자, 권장) 서버 접속용 개인 SSH 키 교체 — 다른 저장소 시크릿에 올라갔던 키이므로
 
 ### Phase 3. CI/CD 파이프라인
+> 시작 전에 정할 것 (Phase 2 QA, `docs/reviews/qa-2-20261119.md`):
+> 1. 서버 파일(compose, `deploy.sh`) 갱신 방식 — 모두 root 소유이고 `deploy`에 sudo가 없음
+> 2. api 컨테이너 UID = `APP_UID`(10001)로 고정 (서버 `data/` 소유자와 일치)
+> 3. 배포 직전 DB 백업 방식 — `data/`가 700이라 호스트 `deploy`가 못 읽음 → 컨테이너 안에서 백업
+> 4. 롤백용 현재·직전 SHA를 별도 상태 파일에 기록
+> 5. uvicorn `--proxy-headers` + `--forwarded-allow-ips`를 web 컨테이너 대역으로 한정 (로그인 실패 제한·Secure 쿠키)
+> 6. 배포 후 헬스체크는 Caddy를 거친 `https://<도메인>/api/health`
+> 7. GHCR 이미지 공개 여부와 서버 `deploy`의 pull 인증
 - [ ] CI 확장: 백엔드 pytest + 프론트 빌드를 PR마다 실행
 - [ ] CD: `main` 병합 시 이미지 빌드 → GHCR push → 서버 배포 (`.github/workflows/deploy.yml`)
 - [ ] GitHub Environment `production` + 배포 전 수동 승인(본인)
