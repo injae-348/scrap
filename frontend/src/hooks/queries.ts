@@ -6,7 +6,9 @@ import {
   type InfiniteData,
 } from '@tanstack/react-query'
 import { authApi, scrapsApi, sourcesApi, topicsApi } from '../api'
-import type { Scrap, ScrapInput, ScrapListParams, ScrapListResponse, Source } from '../api/types'
+import { ApiError, errorMessage } from '../api/http'
+import type { Scrap, ScrapInput, ScrapListParams, ScrapListResponse, ScrapPatch, SourceInput } from '../api/types'
+import { showToast } from '../lib/toast'
 
 export const keys = {
   authStatus: ['auth', 'status'] as const,
@@ -52,8 +54,9 @@ export function useSessions() {
 export function useSaveScrap() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (v: { id?: number; body: ScrapInput }) =>
-      v.id ? scrapsApi.update(v.id, v.body) : scrapsApi.create(v.body),
+    // 생성은 POST(liked 선택), 수정은 PATCH(liked는 보내지 않음 — 좋아요는 PUT /like로만)
+    mutationFn: (v: { id: number; body: ScrapPatch } | { id?: undefined; body: ScrapInput }) =>
+      v.id !== undefined ? scrapsApi.update(v.id, v.body) : scrapsApi.create(v.body),
     onSuccess: (saved) => {
       qc.setQueryData(keys.scrap(saved.id), saved)
       return qc.invalidateQueries({ queryKey: ['scraps', 'list'] })
@@ -72,7 +75,7 @@ export function useDeleteScrap() {
   })
 }
 
-/** 좋아요 토글 — 화면은 즉시 바꾸고(낙관적 업데이트) 실패하면 되돌린다 */
+/** 좋아요 — 화면은 즉시 바꾸고(낙관적 업데이트), 실패하면 되돌리고 짧게 안내한다 */
 export function useToggleLike() {
   const qc = useQueryClient()
   const patch = (id: number, liked: boolean) => {
@@ -90,9 +93,14 @@ export function useToggleLike() {
     qc.setQueryData<Scrap>(keys.scrap(id), (old) => (old ? { ...old, liked } : old))
   }
   return useMutation({
-    mutationFn: (s: Pick<Scrap, 'id' | 'liked'>) => scrapsApi.toggleLike(s.id),
+    // PUT /scraps/{id}/like { liked } — 원하는 값을 지정하므로 연타·재시도해도 결과가 같다
+    mutationFn: (s: Pick<Scrap, 'id' | 'liked'>) => scrapsApi.setLike(s.id, !s.liked),
     onMutate: (s) => patch(s.id, !s.liked),
-    onError: (_e, s) => patch(s.id, s.liked),
+    onError: (e, s) => {
+      patch(s.id, s.liked)
+      const net = e instanceof ApiError && e.status === 0
+      showToast(net ? errorMessage(e) : '좋아요를 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.', 'danger')
+    },
     onSuccess: (res, s) => patch(s.id, res.liked),
   })
 }
@@ -123,13 +131,13 @@ export function useReorderTopics() {
 
 export function useCreateSource() {
   return useInvalidating(
-    (v: { name: string; domain_patterns: string[] }) => sourcesApi.create(v),
+    (v: SourceInput) => sourcesApi.create(v),
     [keys.sources],
   )
 }
 export function useUpdateSource() {
   return useInvalidating(
-    (v: { id: number; body: Partial<Omit<Source, 'id'>> }) => sourcesApi.update(v.id, v.body),
+    (v: { id: number; body: Partial<SourceInput> }) => sourcesApi.update(v.id, v.body),
     [keys.sources, keys.scraps],
   )
 }

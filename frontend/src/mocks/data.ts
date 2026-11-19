@@ -5,16 +5,14 @@ import type { Scrap, Session, Source, Topic } from '../api/types'
 import { addDaysISO } from '../lib/date'
 
 export const initialSources: Source[] = [
-  { id: 1, name: '유튜브', domain_patterns: ['youtube.com', 'youtu.be'] },
-  { id: 2, name: 'X', domain_patterns: ['x.com', 'twitter.com'] },
-  { id: 3, name: '일반사이트', domain_patterns: [] },
-  { id: 4, name: '당근', domain_patterns: ['daangn.com'] },
-  { id: 5, name: '커뮤니티', domain_patterns: ['community.example.com', 'forum.example.org'] },
-  { id: 6, name: '깃허브', domain_patterns: ['github.com'] },
+  { id: 1, name: '유튜브', domain_patterns: ['youtube.com', 'youtu.be'], is_default: false },
+  { id: 2, name: 'X', domain_patterns: ['x.com', 'twitter.com'], is_default: false },
+  // 패턴에 맞는 출처가 없을 때 쓰는 기본 출처
+  { id: 3, name: '일반사이트', domain_patterns: [], is_default: true },
+  { id: 4, name: '당근', domain_patterns: ['daangn.com'], is_default: false },
+  { id: 5, name: '커뮤니티', domain_patterns: ['community.example.com', 'forum.example.org'], is_default: false },
+  { id: 6, name: '깃허브', domain_patterns: ['github.com'], is_default: false },
 ]
-
-/** 패턴에 맞는 출처가 없을 때 쓰는 기본 출처 */
-export const DEFAULT_SOURCE_ID = 3
 
 export const initialTopics: Topic[] = [
   { id: 1, name: 'claude' },

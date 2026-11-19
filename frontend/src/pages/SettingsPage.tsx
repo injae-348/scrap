@@ -23,7 +23,6 @@ import {
 } from '../hooks/queries'
 import { relativeTime } from '../lib/date'
 import { mockDev } from '../mocks/server'
-import { DEFAULT_SOURCE_ID } from '../mocks/data'
 
 function Section({ title, description, children }: { title: string; description?: string; children: ReactNode }) {
   return (
@@ -54,6 +53,7 @@ export function SettingsPage() {
   const updateSource = useUpdateSource()
   const deleteSource = useDeleteSource()
   const reorderSources = useReorderSources()
+  const defaultName = sources.data?.find((s) => s.is_default)?.name ?? '기본 출처'
 
   return (
     <div className="lg:h-dvh lg:overflow-y-auto">
@@ -70,6 +70,7 @@ export function SettingsPage() {
             <ManageList
               items={topics.data.map((t) => ({ id: t.id, name: `#${t.name}`, extra: undefined }))}
               addPlaceholder="새 주제 이름"
+              emptyText="아직 주제가 없어요. 아래에서 추가해 보세요."
               onAdd={(name) => createTopic.mutateAsync(name.replace(/^#/, ''))}
               onRename={(id, name) => updateTopic.mutateAsync({ id, name: name.replace(/^#/, '') })}
               onDelete={(id) => deleteTopic.mutateAsync(id)}
@@ -79,7 +80,7 @@ export function SettingsPage() {
           )}
         </Section>
 
-        <Section title="출처" description="링크 도메인으로 출처를 자동 판별해요. 맞는 도메인이 없으면 '일반사이트'가 돼요.">
+        <Section title="출처" description={`링크 도메인으로 출처를 자동 판별해요. 맞는 도메인이 없으면 '${defaultName}'(으)로 저장돼요.`}>
           {sources.isPending ? (
             <Spinner />
           ) : sources.isError ? (
@@ -89,20 +90,23 @@ export function SettingsPage() {
               items={sources.data.map((s) => ({
                 id: s.id,
                 name: s.name,
-                detail: s.domain_patterns.length ? s.domain_patterns.join(', ') : '도메인 없음 (기본 출처)',
+                detail: [s.is_default && '기본 출처', s.domain_patterns.join(', ') || (!s.is_default && '도메인 없음')]
+                  .filter(Boolean)
+                  .join(' · '),
                 extra: s.domain_patterns.join(', '),
-                locked: s.id === DEFAULT_SOURCE_ID ? '기본 출처는 삭제할 수 없어요' : undefined,
+                locked: s.is_default ? '기본 출처는 삭제할 수 없어요' : undefined,
               }))}
               extraLabel="도메인"
               extraPlaceholder="도메인 (쉼표로 구분, 예: example.com)"
               addPlaceholder="새 출처 이름"
+              emptyText="아직 출처가 없어요. 아래에서 추가해 보세요."
               onAdd={(name, extra) => createSource.mutateAsync({ name, domain_patterns: splitPatterns(extra) })}
               onRename={(id, name, extra) =>
                 updateSource.mutateAsync({ id, body: { name, domain_patterns: splitPatterns(extra) } })
               }
               onDelete={(id) => deleteSource.mutateAsync(id)}
               onReorder={(ids) => reorderSources.mutateAsync(ids)}
-              deleteWarning="출처를 삭제하면 그 출처의 스크랩은 '일반사이트'로 옮겨져요."
+              deleteWarning={`출처를 삭제하면 그 출처의 스크랩은 '${defaultName}'(으)로 옮겨져요.`}
             />
           )}
         </Section>

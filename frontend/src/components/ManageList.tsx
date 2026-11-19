@@ -19,6 +19,8 @@ interface Props {
   extraLabel?: string
   extraPlaceholder?: string
   addPlaceholder: string
+  /** 항목이 0개일 때 안내 문구 */
+  emptyText: string
   onAdd: (name: string, extra: string) => Promise<unknown>
   onRename: (id: number, name: string, extra: string) => Promise<unknown>
   onDelete: (id: number) => Promise<unknown>
@@ -59,7 +61,10 @@ export function ManageList(p: Props) {
 
   return (
     <div className="space-y-3">
-      <ul className="divide-y divide-line rounded-lg border border-line">
+      {p.items.length === 0 && (
+        <p className="rounded-lg border border-dashed border-line px-3 py-4 text-center text-sm text-muted">{p.emptyText}</p>
+      )}
+      <ul className={cx('divide-y divide-line rounded-lg border border-line', p.items.length === 0 && 'hidden')}>
         {p.items.map((it, idx) =>
           editing === it.id ? (
             <EditRow

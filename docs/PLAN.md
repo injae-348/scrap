@@ -54,10 +54,10 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] 작업 방식: 기능마다 브랜치 → PR → CI 통과 → 사용자 확인 후 병합
 
 ### Phase 1. UI 프로토타입
-- [ ] React + Vite + TS 프로젝트 생성, 목(mock) 데이터로 전체 화면 구현
-- [ ] 모바일(375px)과 데스크톱(1280px)에서 모두 확인
-- [ ] 디자인 확정 후 다음 단계로
-- [ ] CI(검사만): PR마다 프론트 린트·타입체크·빌드 (`.github/workflows/ci.yml`)
+- [x] React + Vite + TS 프로젝트 생성, 목(mock) 데이터로 전체 화면 구현
+- [x] 모바일(375px)과 데스크톱(1280px)에서 모두 확인 (브라우저 에뮬레이션. 실기기 아이폰은 Phase 6)
+- [x] 디자인 확정 후 다음 단계로 (2026-11-19 확정, API.md v1 확정, QA: `docs/reviews/qa-1-20261119.md`)
+- [x] CI(검사만): PR마다 프론트 린트·타입체크·빌드 (`.github/workflows/ci.yml`)
 
 ### Phase 2. 서버 준비
 - [ ] 서버 아키텍처 확인 (`uname -m`: x86_64 / aarch64) → Docker 이미지 플랫폼 결정
@@ -89,6 +89,7 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] FTS5 trigram 검색
 
 ### Phase 6. 프론트 연동 + PWA
+- [ ] Phase 1 QA에서 넘긴 것: 개발용 섹션·"목 모드" 문구 제거, 401/`/auth/status` 오류 처리, 작성 중 이탈 경고, 사이드바 주제 다중 선택 (`docs/reviews/qa-1-20261119.md`)
 - [ ] 목 데이터를 실제 API로 교체
 - [ ] manifest, 아이콘, 서비스워커 → 아이폰 홈 화면 추가 테스트
 - [ ] 클립보드 붙여넣기 동선 테스트 (iOS Safari)

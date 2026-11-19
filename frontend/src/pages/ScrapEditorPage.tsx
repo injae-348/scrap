@@ -103,6 +103,8 @@ function ScrapForm({
   const [bodyText, setBodyText] = useState('')
   const [clipMsg, setClipMsg] = useState<string | null>(null)
   const [previewedUrl, setPreviewedUrl] = useState(initial?.url ?? '')
+  /** 제목 자동 채움 실패: 'no-title'(title: null) / 'error'(요청 실패) */
+  const [previewFail, setPreviewFail] = useState<'no-title' | 'error' | null>(null)
   const [ai, setAi] = useState<AiState>(emptyAi)
   const [notFetched, setNotFetched] = useState(false)
   const [errors, setErrors] = useState<{ url?: string; source?: string }>({})
@@ -115,6 +117,7 @@ function ScrapForm({
     const trimmed = u.trim()
     if (!isValidHttpUrl(trimmed) || trimmed === previewedUrl) return
     setPreviewedUrl(trimmed)
+    setPreviewFail(null)
     preview.mutate(
       { url: trimmed },
       {
@@ -123,7 +126,13 @@ function ScrapForm({
             setSourceId(res.source_id)
             setSourceMode('auto')
           }
-          setTitle((prev) => (prev.trim() === '' && res.title ? res.title : prev))
+          if (res.title) setTitle((prev) => (prev.trim() === '' ? res.title! : prev))
+          else setPreviewFail('no-title')
+        },
+        // 실패해도 저장은 막지 않는다. 다시 시도할 수 있게 같은 주소도 재요청 허용
+        onError: () => {
+          setPreviewFail('error')
+          setPreviewedUrl('')
         },
       },
     )
@@ -246,21 +255,19 @@ function ScrapForm({
     if (!sourceId) next.source = '출처를 선택해 주세요.'
     setErrors(next)
     if (next.url || next.source) return
-    save.mutate(
-      {
-        id: initial?.id,
-        body: {
-          url: u,
-          title: title.trim() || u,
-          memo,
-          source_id: sourceId!,
-          topic_ids: topicIds,
-          liked: initial?.liked ?? false,
-          due_date: due || null,
-        },
-      },
-      { onSuccess: (s) => navigate(`${ctx.base}/scraps/${s.id}${ctx.search}`, { replace: true }) },
-    )
+    // 빈 제목은 서버가 url로 저장한다 (API.md 입력 규칙). liked는 보내지 않는다:
+    // 생성은 기본 false, 수정(PATCH)은 liked를 받지 않음 — 다른 기기의 좋아요 변경을 덮어쓰지 않기 위해
+    const body = {
+      url: u,
+      title: title.trim(),
+      memo,
+      source_id: sourceId!,
+      topic_ids: topicIds,
+      due_date: due || null,
+    }
+    save.mutate(initial ? { id: initial.id, body } : { body }, {
+      onSuccess: (s) => navigate(`${ctx.base}/scraps/${s.id}${ctx.search}`, { replace: true }),
+    })
   }
 
   const aiBadge = (field: AiField) =>
@@ -347,6 +354,12 @@ function ScrapForm({
             <p id="url-error" className="text-sm text-danger">
               {errors.url}
             </p>
+          )}
+          {previewFail && !title.trim() && (
+            <Notice tone="warn">
+              {previewFail === 'error' && '링크 정보를 불러오지 못했어요. '}
+              제목을 자동으로 가져오지 못했어요. 직접 입력해 주세요. (비워 두면 링크 주소로 저장돼요)
+            </Notice>
           )}
 
           <div className="flex flex-wrap items-center gap-2">
@@ -508,7 +521,7 @@ function ScrapForm({
                   aria-selected={memoTab === v}
                   onClick={() => setMemoTab(v)}
                   className={cx(
-                    'min-h-10 rounded-md px-3 lg:min-h-8',
+                    'min-h-11 rounded-md px-3 lg:min-h-8',
                     memoTab === v ? 'bg-hover font-medium text-fg' : 'text-muted',
                   )}
                 >

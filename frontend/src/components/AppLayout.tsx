@@ -3,6 +3,7 @@ import { useAuthStatus } from '../hooks/queries'
 import { BottomTabBar } from './BottomTabBar'
 import { IconPlus } from './Icons'
 import { Sidebar } from './Sidebar'
+import { Toaster } from './Toaster'
 import { Spinner } from './ui'
 
 /** 로그인 후 화면의 공통 틀: 사이드바(md~) / 하단 탭바 + 떠 있는 "+"(~767px) */
@@ -32,14 +33,15 @@ export function AppLayout() {
       </main>
       {showFab && (
         <Link
-            to="/scraps/new"
-            aria-label="새 스크랩 저장"
-            className="fixed right-4 bottom-fab z-30 flex size-14 items-center justify-center rounded-full bg-accent-solid text-on-accent shadow-lg shadow-black/20 active:scale-95 md:hidden"
-          >
+          to="/scraps/new"
+          aria-label="새 스크랩 저장"
+          className="fixed right-4 bottom-fab z-30 flex size-14 items-center justify-center rounded-full bg-accent-solid text-on-accent shadow-lg shadow-black/20 active:scale-95 md:hidden"
+        >
           <IconPlus size={26} />
         </Link>
       )}
       {!fullScreen && <BottomTabBar />}
+      <Toaster />
     </div>
   )
 }

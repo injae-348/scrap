@@ -3,11 +3,14 @@
 //   ?fail=list      목록 API 실패
 //   ?fail=ai        AI 채우기·AI 검색 실패
 //   ?fail=save      저장 실패
+//   ?fail=like      좋아요 변경 실패
 //   ?auth=login     로그아웃 상태로 시작
 //   ?auth=setup     가입 전(사용자 0명) 상태로 시작
 //   ?slow=1         지연을 1.5초로 늘림 (로딩 화면 확인용)
 
-export type FailTarget = 'list' | 'ai' | 'save'
+export type FailTarget = 'list' | 'ai' | 'save' | 'like'
+
+const FAIL_TARGETS: readonly string[] = ['list', 'ai', 'save', 'like']
 
 const params = new URLSearchParams(window.location.search)
 
@@ -16,7 +19,7 @@ export const mockFlags = {
   fail: new Set<FailTarget>(
     (params.get('fail') ?? '')
       .split(',')
-      .filter((s): s is FailTarget => s === 'list' || s === 'ai' || s === 'save'),
+      .filter((s): s is FailTarget => FAIL_TARGETS.includes(s)),
   ),
   slow: params.get('slow') === '1',
   auth: params.get('auth'),

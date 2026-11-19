@@ -93,6 +93,10 @@
 @utility bottom-fab {
   bottom: calc(56px + env(safe-area-inset-bottom) + 16px);
 }
+/* 토스트: 탭바와 "+" 버튼(56px) 위 */
+@utility bottom-toast {
+  bottom: calc(56px + env(safe-area-inset-bottom) + 84px);
+}
 
 @layer base {
   html {

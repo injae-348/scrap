@@ -73,7 +73,7 @@ export function ScrapDetailPage() {
                 <li key={t.id}>
                   <Link
                     to={`${topicBase}?topics=${t.id}`}
-                    className="inline-flex min-h-8 items-center rounded-full bg-accent-soft px-2.5 text-sm text-accent"
+                    className="inline-flex min-h-11 items-center rounded-full bg-accent-soft px-3 text-sm text-accent lg:min-h-8 lg:px-2.5"
                   >
                     #{t.name}
                   </Link>

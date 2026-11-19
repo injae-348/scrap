@@ -69,7 +69,7 @@ function ListPane({ view }: { view: View }) {
                   aria-pressed={filters.sort === v}
                   onClick={() => update({ sort: v })}
                   className={cx(
-                    'min-h-10 rounded-md px-3 lg:min-h-8',
+                    'min-h-11 rounded-md px-3 lg:min-h-8',
                     filters.sort === v ? 'bg-hover font-medium text-fg' : 'text-muted',
                   )}
                 >

@@ -22,8 +22,10 @@ import type {
   ScrapInput,
   ScrapListParams,
   ScrapListResponse,
+  ScrapPatch,
   Session,
   Source,
+  SourceInput,
   Topic,
   TotpSetupInfo,
 } from './types'
@@ -63,9 +65,9 @@ export const authApi = {
   sessions: (): Promise<Session[]> => mockAuth.sessions(),
   /** DELETE /auth/sessions/{id} */
   deleteSession: (id: number): Promise<void> => mockAuth.deleteSession(id),
-  /** [API.md에 없음 — 제안] POST /auth/totp/reset */
+  /** POST /auth/totp/reset */
   totpReset: (body: { password: string; code: string }): Promise<TotpSetupInfo> => mockAuth.totpReset(body),
-  /** [API.md에 없음 — 제안] POST /auth/totp/reset/verify */
+  /** POST /auth/totp/reset/verify */
   totpResetVerify: (body: { code: string }): Promise<RecoveryCodesResponse> => mockAuth.totpResetVerify(body),
 }
 
@@ -77,12 +79,12 @@ export const scrapsApi = {
   get: (id: number): Promise<Scrap> => mockScraps.get(id),
   /** POST /scraps */
   create: (body: ScrapInput): Promise<Scrap> => mockScraps.create(body),
-  /** PATCH /scraps/{id} */
-  update: (id: number, body: Partial<ScrapInput>): Promise<Scrap> => mockScraps.update(id, body),
+  /** PATCH /scraps/{id} (liked 제외) */
+  update: (id: number, body: ScrapPatch): Promise<Scrap> => mockScraps.update(id, body),
   /** DELETE /scraps/{id} */
   remove: (id: number): Promise<void> => mockScraps.remove(id),
-  /** POST /scraps/{id}/like */
-  toggleLike: (id: number): Promise<{ liked: boolean }> => mockScraps.toggleLike(id),
+  /** PUT /scraps/{id}/like { liked } — 값 지정 방식 */
+  setLike: (id: number, liked: boolean): Promise<{ liked: boolean }> => mockScraps.setLike(id, { liked }),
 }
 
 // ---------------------------------------------------------------- 보조 기능
@@ -95,13 +97,13 @@ export const sourcesApi = {
   /** GET /sources */
   list: (): Promise<Source[]> => mockSources.list(),
   /** POST /sources */
-  create: (body: { name: string; domain_patterns: string[] }): Promise<Source> => mockSources.create(body),
+  create: (body: SourceInput): Promise<Source> => mockSources.create(body),
   /** PATCH /sources/{id} */
-  update: (id: number, body: Partial<Omit<Source, 'id'>>): Promise<Source> => mockSources.update(id, body),
-  /** DELETE /sources/{id} */
+  update: (id: number, body: Partial<SourceInput>): Promise<Source> => mockSources.update(id, body),
+  /** DELETE /sources/{id} (기본 출처는 403) */
   remove: (id: number): Promise<void> => mockSources.remove(id),
-  /** [API.md에 없음 — 제안] PUT /sources/order { ids } */
-  reorder: (ids: number[]): Promise<Source[]> => mockSources.reorder(ids),
+  /** PUT /sources/order { ids } → 204 */
+  reorder: (ids: number[]): Promise<void> => mockSources.reorder({ ids }),
 }
 
 export const topicsApi = {
@@ -113,8 +115,8 @@ export const topicsApi = {
   update: (id: number, body: { name: string }): Promise<Topic> => mockTopics.update(id, body),
   /** DELETE /topics/{id} */
   remove: (id: number): Promise<void> => mockTopics.remove(id),
-  /** [API.md에 없음 — 제안] PUT /topics/order { ids } */
-  reorder: (ids: number[]): Promise<Topic[]> => mockTopics.reorder(ids),
+  /** PUT /topics/order { ids } → 204 */
+  reorder: (ids: number[]): Promise<void> => mockTopics.reorder({ ids }),
 }
 
 // ---------------------------------------------------------------- /api/ai

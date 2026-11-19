@@ -14,19 +14,16 @@ import type {
   ScrapInput,
   ScrapListParams,
   ScrapListResponse,
+  ScrapPatch,
   Session,
   Source,
+  SourceInput,
   Topic,
   TotpSetupInfo,
 } from '../api/types'
 import { addDaysISO, daysUntil, DUE_SOON_DAYS } from '../lib/date'
-import {
-  buildInitialScraps,
-  DEFAULT_SOURCE_ID,
-  initialSessions,
-  initialSources,
-  initialTopics,
-} from './data'
+import { isValidHttpUrl } from '../lib/url'
+import { buildInitialScraps, initialSessions, initialSources, initialTopics } from './data'
 import { mockFlags, type FailTarget } from './flags'
 
 // ---------------------------------------------------------------- 상태
@@ -154,11 +151,19 @@ export const mockAuth = {
 
   async loginVerify(body: LoginVerifyRequest): Promise<void> {
     await delay()
+    if (db.auth.failedLogins >= 5)
+      throw new ApiError(429, 'too_many_attempts', '로그인 시도가 너무 많습니다. 15분 후 다시 시도해 주세요.')
     if (body.challenge_id !== db.auth.challenge)
       throw new ApiError(400, 'challenge_expired', '인증 시간이 지났습니다. 처음부터 다시 로그인해 주세요.')
-    if ('code' in body) checkTotp(body.code)
-    else if (!/^[a-z0-9]{4}-[a-z0-9]{4}$/i.test(body.recovery_code.trim()))
-      throw new ApiError(400, 'invalid_recovery_code', '복구 코드가 올바르지 않습니다.')
+    try {
+      if ('code' in body) checkTotp(body.code)
+      else if (!/^[a-z0-9]{4}-[a-z0-9]{4}$/i.test(body.recovery_code.trim()))
+        throw new ApiError(400, 'invalid_recovery_code', '복구 코드가 올바르지 않습니다.')
+    } catch (e) {
+      // 비밀번호·코드 실패를 합쳐 5회 연속이면 429 (API.md 입력 규칙)
+      db.auth.failedLogins++
+      throw e
+    }
     db.auth.loggedIn = true
     db.auth.failedLogins = 0
     db.auth.challenge = null
@@ -201,9 +206,17 @@ export const mockAuth = {
 
 // ---------------------------------------------------------------- 스크랩
 
+function defaultSource(): Source {
+  return db.sources.find((x) => x.is_default)!
+}
+
 function sourceRef(id: number) {
-  const s = db.sources.find((x) => x.id === id) ?? db.sources.find((x) => x.id === DEFAULT_SOURCE_ID)!
+  const s = db.sources.find((x) => x.id === id) ?? defaultSource()
   return { id: s.id, name: s.name }
+}
+
+function checkUrl(url: string) {
+  if (!isValidHttpUrl(url)) throw new ApiError(400, 'invalid_url', 'http 또는 https 링크만 저장할 수 있습니다.')
 }
 
 function topicsOf(ids: number[]): Topic[] {
@@ -263,15 +276,17 @@ export const mockScraps = {
   async create(body: ScrapInput): Promise<Scrap> {
     await delay()
     failIf('save', '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.')
+    checkUrl(body.url)
     const now = new Date().toISOString()
     const scrap: Scrap = {
       id: newId(),
       url: body.url,
-      title: body.title,
+      // 빈 제목이면 url을 제목으로 (API.md 입력 규칙)
+      title: body.title.trim() || body.url,
       memo: body.memo,
       source: sourceRef(body.source_id),
       topics: topicsOf(body.topic_ids),
-      liked: body.liked,
+      liked: body.liked ?? false,
       due_date: body.due_date,
       created_at: now,
       updated_at: now,
@@ -280,17 +295,19 @@ export const mockScraps = {
     return structuredClone(scrap)
   },
 
-  async update(id: number, body: Partial<ScrapInput>): Promise<Scrap> {
+  async update(id: number, body: ScrapPatch): Promise<Scrap> {
     await delay()
     failIf('save', '저장하지 못했습니다. 잠시 후 다시 시도해 주세요.')
     const s = db.scraps.find((x) => x.id === id)
     if (!s) notFound()
-    if (body.url !== undefined) s.url = body.url
-    if (body.title !== undefined) s.title = body.title
+    if (body.url !== undefined) {
+      checkUrl(body.url)
+      s.url = body.url
+    }
+    if (body.title !== undefined) s.title = body.title.trim() || s.url
     if (body.memo !== undefined) s.memo = body.memo
     if (body.source_id !== undefined) s.source = sourceRef(body.source_id)
     if (body.topic_ids !== undefined) s.topics = topicsOf(body.topic_ids)
-    if (body.liked !== undefined) s.liked = body.liked
     if (body.due_date !== undefined) s.due_date = body.due_date
     s.updated_at = new Date().toISOString()
     return structuredClone(s)
@@ -301,28 +318,31 @@ export const mockScraps = {
     db.scraps = db.scraps.filter((x) => x.id !== id)
   },
 
-  async toggleLike(id: number): Promise<{ liked: boolean }> {
+  /** PUT /scraps/{id}/like — 값 지정 방식 */
+  async setLike(id: number, body: { liked: boolean }): Promise<{ liked: boolean }> {
     await delay()
+    failIf('like', '좋아요를 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.')
     const s = db.scraps.find((x) => x.id === id)
     if (!s) notFound()
-    s.liked = !s.liked
+    s.liked = body.liked
     return { liked: s.liked }
   },
 }
 
 // ---------------------------------------------------------------- 메타
 
+/** 판별 실패 시 기본 출처 id (API.md: source_id는 항상 숫자) */
 export function detectSourceId(url: string): number {
   let host = ''
   try {
     host = new URL(url).hostname.toLowerCase()
   } catch {
-    return DEFAULT_SOURCE_ID
+    return defaultSource().id
   }
   for (const s of db.sources) {
     if (s.domain_patterns.some((p) => host === p || host.endsWith('.' + p))) return s.id
   }
-  return DEFAULT_SOURCE_ID
+  return defaultSource().id
 }
 
 export const mockMeta = {
@@ -338,12 +358,16 @@ export const mockMeta = {
 // ---------------------------------------------------------------- 출처·주제
 
 function reorder<T extends { id: number }>(list: T[], ids: number[]): T[] {
-  return ids.map((id) => list.find((x) => x.id === id)).filter((x): x is T => !!x)
+  if (ids.length !== list.length || !list.every((x) => ids.includes(x.id)))
+    throw new ApiError(400, 'invalid_order', '순서 정보가 올바르지 않습니다.')
+  return ids.map((id) => list.find((x) => x.id === id)!)
 }
 
+/** 이름 규칙: 앞뒤 공백 제거 후 1~30자, 같은 종류 안에서 중복 불가 (API.md 입력 규칙) */
 function checkName(name: string, list: { id: number; name: string }[], selfId?: number) {
   const n = name.trim()
   if (!n) throw new ApiError(400, 'invalid_name', '이름을 입력해 주세요.')
+  if (n.length > 30) throw new ApiError(400, 'invalid_name', '이름은 30자 이하로 입력해 주세요.')
   if (list.some((x) => x.name.toLowerCase() === n.toLowerCase() && x.id !== selfId))
     throw new ApiError(400, 'duplicate_name', '같은 이름이 이미 있습니다.')
   return n
@@ -353,13 +377,18 @@ export const mockSources = {
   async list(): Promise<Source[]> {
     return respond(db.sources)
   },
-  async create(body: { name: string; domain_patterns: string[] }): Promise<Source> {
+  async create(body: SourceInput): Promise<Source> {
     await delay()
-    const s: Source = { id: newId(), name: checkName(body.name, db.sources), domain_patterns: body.domain_patterns }
+    const s: Source = {
+      id: newId(),
+      name: checkName(body.name, db.sources),
+      domain_patterns: body.domain_patterns,
+      is_default: false,
+    }
     db.sources.push(s)
     return structuredClone(s)
   },
-  async update(id: number, body: Partial<Omit<Source, 'id'>>): Promise<Source> {
+  async update(id: number, body: Partial<SourceInput>): Promise<Source> {
     await delay()
     const s = db.sources.find((x) => x.id === id)
     if (!s) throw new ApiError(404, 'not_found', '출처를 찾을 수 없습니다.')
@@ -372,19 +401,19 @@ export const mockSources = {
   },
   async remove(id: number): Promise<void> {
     await delay()
-    if (id === DEFAULT_SOURCE_ID)
-      throw new ApiError(400, 'default_source', '기본 출처(일반사이트)는 삭제할 수 없습니다.')
+    if (db.sources.find((x) => x.id === id)?.is_default)
+      throw new ApiError(403, 'default_source', '기본 출처는 삭제할 수 없습니다.')
     db.sources = db.sources.filter((x) => x.id !== id)
-    // 삭제된 출처의 스크랩은 기본 출처로 옮긴다 (제안 동작)
+    // 삭제된 출처의 스크랩은 기본 출처로 옮긴다
+    const def = defaultSource()
     db.scraps.forEach((sc) => {
-      if (sc.source.id === id) sc.source = sourceRef(DEFAULT_SOURCE_ID)
+      if (sc.source.id === id) sc.source = { id: def.id, name: def.name }
     })
   },
-  // API.md에 없음: 순서 변경 (API 변경 제안)
-  async reorder(ids: number[]): Promise<Source[]> {
+  /** PUT /sources/order → 204 */
+  async reorder(body: { ids: number[] }): Promise<void> {
     await delay()
-    db.sources = reorder(db.sources, ids)
-    return structuredClone(db.sources)
+    db.sources = reorder(db.sources, body.ids)
   },
 }
 
@@ -415,11 +444,10 @@ export const mockTopics = {
       sc.topics = sc.topics.filter((x) => x.id !== id)
     })
   },
-  // API.md에 없음: 순서 변경 (API 변경 제안)
-  async reorder(ids: number[]): Promise<Topic[]> {
+  /** PUT /topics/order → 204 */
+  async reorder(body: { ids: number[] }): Promise<void> {
     await delay()
-    db.topics = reorder(db.topics, ids)
-    return structuredClone(db.topics)
+    db.topics = reorder(db.topics, body.ids)
   },
 }
 

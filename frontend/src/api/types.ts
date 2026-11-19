@@ -1,5 +1,4 @@
-// docs/API.md의 데이터 형식을 그대로 옮긴 타입.
-// API.md에 없는 항목은 "제안" 주석을 달았다 (보고서의 API 변경 제안 참고).
+// docs/API.md(v1 확정본)의 데이터 형식을 그대로 옮긴 타입.
 
 export interface SourceRef {
   id: number
@@ -8,6 +7,14 @@ export interface SourceRef {
 
 export interface Source {
   id: number
+  name: string
+  domain_patterns: string[]
+  /** 기본 출처(일반사이트). 정확히 1개, 삭제 불가 */
+  is_default: boolean
+}
+
+/** POST /sources, PATCH /sources/{id} 본문 */
+export interface SourceInput {
   name: string
   domain_patterns: string[]
 }
@@ -46,16 +53,20 @@ export interface ScrapListResponse {
   next_cursor: string | null
 }
 
-/** POST /scraps 요청 본문 (Scrap에서 id·날짜 제외, source_id, topic_ids 사용) */
+/** POST /scraps 요청 본문 (Scrap에서 id·날짜 제외, source_id, topic_ids 사용). title이 빈 문자열이면 서버가 url로 저장 */
 export interface ScrapInput {
   url: string
   title: string
   memo: string
   source_id: number
   topic_ids: number[]
-  liked: boolean
+  /** 선택, 기본 false */
+  liked?: boolean
   due_date: string | null
 }
+
+/** PATCH /scraps/{id} 본문 — liked는 받지 않는다 (좋아요는 PUT /scraps/{id}/like로만) */
+export type ScrapPatch = Partial<Omit<ScrapInput, 'liked'>>
 
 export interface AuthStatus {
   setup_required: boolean
@@ -81,7 +92,7 @@ export type LoginVerifyRequest =
   | { challenge_id: string; code: string }
   | { challenge_id: string; recovery_code: string }
 
-/** GET /auth/sessions 항목 — API.md에 형식이 없어 제안한 형태 */
+/** GET /auth/sessions 항목 */
 export interface Session {
   id: number
   user_agent: string
