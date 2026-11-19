@@ -46,7 +46,7 @@
 - Oracle Cloud 무료 인스턴스: **1코어 / RAM 1GB (+ 스왑 2GB)**
 - 헤드리스 브라우저(Chromium, Playwright, Puppeteer) 사용 금지
 - 서버에서 프론트엔드 빌드 금지 → 로컬 또는 GitHub Actions에서 빌드
-- 도메인: **DuckDNS 서브도메인**(`<이름>.duckdns.org`)을 새로 발급해서 사용. 기존 도메인·Caddy는 쓰지 않는다.
+- 도메인: 이미 발급해 서버를 가리키는 **DuckDNS 서브도메인**(`<이름>.duckdns.org`)을 재사용한다. 기존 Caddy(와 기존 컨테이너)는 종료하고 web 컨테이너의 Caddy가 대체한다.
 - HTTPS: web 컨테이너의 Caddy가 Let's Encrypt 인증서를 자동 발급 (HTTP-01, 80/443 포트 사용)
 - DuckDNS 토큰은 비밀값이다. 서버에만 두고 저장소·CI·로그에 넣지 않는다.
 

@@ -1,0 +1,21 @@
+# Phase 2 첫 HTTPS 확인용 임시 Caddyfile (deploy/README.md 8단계).
+# 운영 Caddyfile(deploy/Caddyfile)과 같은 전역 설정을 써서, 여기서 받은 인증서를 운영 web 컨테이너가 그대로 이어 쓴다.
+
+{
+	admin off
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$SITE_DOMAIN} {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Content-Type "text/html; charset=utf-8"
+		Cache-Control "no-store"
+		-Server
+	}
+	respond "<!doctype html><html lang=ko><meta charset=utf-8><title>scrap-app</title><p>HTTPS 확인용 임시 페이지입니다. (Phase 2)</p></html>" 200
+}

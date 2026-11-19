@@ -1,0 +1,48 @@
+# Phase 2 첫 HTTPS 확인용 임시 구성 (deploy/README.md 8단계).
+# 아직 GHCR 이미지가 없으므로 공식 caddy 이미지 + 임시 응답으로 인증서 발급만 확인한다.
+#
+# 실행 (서버, /opt/scrap-app 에서):
+#   sudo -u deploy -H docker compose -f deploy/bootstrap/docker-compose.yml --env-file .env up -d
+# 내리기 (인증서는 서버 폴더에 남는다):
+#   sudo -u deploy -H docker compose -f deploy/bootstrap/docker-compose.yml --env-file .env down
+#
+# 프로젝트 이름을 운영(scrap-app)과 다르게 두어, 이 파일로 down 해도 운영 컨테이너에 영향이 없게 한다.
+# 인증서 폴더는 운영 compose와 같은 /opt/scrap-app/caddy/{data,config} 를 써서, 여기서 받은 인증서를 운영 구성이 이어받는다.
+# 기존 서버의 다른 프로젝트(conversation_*, caddy-test_*)와 프로젝트·볼륨 이름이 겹치지 않는다 (볼륨을 쓰지 않음).
+
+name: scrap-bootstrap
+
+services:
+  web:
+    # Phase 3의 운영 web 이미지도 같은 caddy 버전을 기반으로 한다.
+    image: caddy:2.11.4-alpine
+    restart: "no"
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      SITE_DOMAIN: "${SITE_DOMAIN:?SITE_DOMAIN(예: <이름>.duckdns.org)이 필요합니다}"
+      ACME_CA: "${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}"
+    volumes:
+      # 경로는 운영 compose와 같은 방식(절대경로)으로 통일한다.
+      - type: bind
+        source: /opt/scrap-app/deploy/bootstrap/Caddyfile
+        target: /etc/caddy/Caddyfile
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/scrap-app/caddy/data
+        target: /data
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /opt/scrap-app/caddy/config
+        target: /config
+        bind:
+          create_host_path: false
+    mem_limit: 128m
+    pids_limit: 128
+    security_opt:
+      - no-new-privileges:true
+
