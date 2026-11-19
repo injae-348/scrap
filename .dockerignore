@@ -1,0 +1,25 @@
+# 저장소 루트를 빌드 컨텍스트로 쓰는 이미지(현재 web: deploy/web.Dockerfile)용.
+# ⚠️ 공개 저장소·공개 이미지(GHCR): .env·DB·로그·.git 이 이미지에 들어가지 않게 한다.
+#
+# 허용 목록 방식: 전부 제외한 뒤 필요한 것만 다시 넣는다.
+# 루트 컨텍스트로 새 이미지를 만들면서 다른 파일이 필요해지면 여기에 "!경로" 를 추가한다.
+# (api 이미지는 컨텍스트가 backend/ 이므로 backend/.dockerignore 를 쓴다.)
+
+*
+
+!frontend/
+!deploy/Caddyfile
+
+# 다시 넣은 범위 안에서도 제외
+frontend/node_modules/
+frontend/dist/
+frontend/dev-dist/
+frontend/coverage/
+frontend/**/*.tsbuildinfo
+**/.env
+**/.env.*
+**/*.db
+**/*.db-*
+**/*.sqlite*
+**/*.log
+**/.DS_Store

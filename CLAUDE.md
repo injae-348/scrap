@@ -82,7 +82,7 @@ docker-compose.yml
 - 비밀값: `.env`, `.env.*`(`.env.example` 제외), SSH 키(`id_*`, `*.pem`, `*.key`, 배포 키), `known_hosts`, DuckDNS 토큰(`duckdns/`), `secrets/`
 - 데이터: SQLite DB(`*.db`, `*.sqlite*`, `data/`), 백업(`backups/`, `*.bak`), 로그(`logs/`, `*.log`), Caddy 인증서(`caddy_data/`)
 - 인증 산출물: TOTP 비밀값·QR 이미지, 복구 코드 파일
-- 보안 리뷰 결과: `docs/reviews/security-*.md` (조치 전 취약점 노출 방지, 로컬에만 보관)
+- 보안 리뷰 결과: `docs/reviews/security-*.md` (조치 전 취약점 노출 방지, 로컬에만 보관). QA 점검 중 나온 보안 지적도 `qa-*.md`에 쓰지 않고 `security-qa-*.md`로 분리한다
 - 개인 설정: `.claude/settings.local.json`, `CLAUDE.local.md`
 
 ### 파일 내용에도 넣지 않는 값 (코드·문서·주석·테스트·커밋 메시지 모두)
