@@ -85,11 +85,11 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 > 5. **compose 고정 네트워크(서브넷 고정) + web 고정 IP**, uvicorn `--proxy-headers --forwarded-allow-ips=<web IP>`로 web만 신뢰.
 > 6. **배포 후 헬스체크는 실제 도메인 HTTPS** `https://<도메인>/api/health` (Caddy·인증서·프록시까지 검증). 실패 시 직전 SHA로 롤백.
 > 7. **GHCR 이미지 공개.** 서버 `docker login` 불필요. 첫 push 후 사용자가 패키지 2개를 공개로 전환. 이미지에 비밀값이 들어가지 않게 `.dockerignore`로 막는다.
-- [ ] CI 확장: 백엔드 pytest + 프론트 빌드를 PR마다 실행
-- [ ] CD: `main` 병합 시 이미지 빌드 → GHCR push → 서버 배포 (`.github/workflows/deploy.yml`)
-- [ ] GitHub Environment `production` + 배포 전 수동 승인(본인)
-- [ ] 배포 후 헬스체크, 실패 시 직전 버전으로 롤백
-- [ ] 빈 앱(헬스체크 엔드포인트만)으로 파이프라인 끝까지 한 번 성공시키기
+- [x] CI 확장: 백엔드 pytest + 프론트 빌드를 PR마다 실행 (`ci.yml`: frontend·backend·images, 필수 검사 3개 — 2026-11-19 사용자 설정)
+- [x] CD: `main` 병합 시 이미지 빌드 → GHCR push → 서버 배포 (`.github/workflows/deploy.yml`, 패키지 `scrap-api`·`scrap-web` 공개)
+- [x] GitHub Environment `production` + 배포 전 수동 승인(본인, 관리자 우회 끔, main만, Environment 시크릿 4개)
+- [x] 배포 후 헬스체크, 실패 시 직전 버전으로 롤백 (`deploy.sh`, 수동 복구 `rollback.sh` — 롤백 경로는 하네스로만 검증, 운영에서는 아직 미발생)
+- [x] 빈 앱(헬스체크 엔드포인트만)으로 파이프라인 끝까지 한 번 성공시키기 (2026-11-19 PR #5 병합 → 승인 → 배포 성공, 서버·외부 헬스체크 통과, README 12-4 확인 전부 통과. QA: `docs/reviews/qa-3-20261119.md`)
 
 ### Phase 4. 인증
 - [ ] 최초 가입, TOTP 등록, 복구 코드
