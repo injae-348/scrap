@@ -155,6 +155,7 @@ sudo ls -la /opt/scrap-app /opt/scrap-app/caddy
 ├── deploy/                     root     755   스크립트 (deploy가 고칠 수 없음)
 │   ├── duckdns-update.sh                755
 │   ├── deploy.sh                        755   배포 스크립트 (CI 키의 강제 명령, 11절로 설치)
+│   ├── rollback.sh                      755   수동 롤백·DB 복원 (사람이 sudo로, 12-6)
 │   └── bootstrap/                             8단계 임시 구성
 ├── data/                       APP_UID  700   SQLite → api 컨테이너 /data
 ├── caddy/                      root     755
@@ -737,6 +738,7 @@ staging 인증서는 브라우저가 신뢰하지 않으므로(경고가 정상)
 |---|---|---|
 | `docker-compose.yml` | `/opt/scrap-app/docker-compose.yml` | root 644 |
 | `deploy/deploy.sh` | `/opt/scrap-app/deploy/deploy.sh` | root 755 |
+| `deploy/rollback.sh` | `/opt/scrap-app/deploy/rollback.sh` | root 755 |
 | `deploy/duckdns-update.sh` | `/opt/scrap-app/deploy/duckdns-update.sh` | root 755 |
 | `deploy/logrotate.conf` | `/etc/logrotate.d/scrap-app` | root 644 |
 
@@ -753,6 +755,7 @@ sudo git -C /opt/scrap-app/src pull --ff-only
 
 sudo install -m 644 -o root -g root /opt/scrap-app/src/docker-compose.yml       /opt/scrap-app/docker-compose.yml
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/deploy.sh         /opt/scrap-app/deploy/deploy.sh
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/rollback.sh       /opt/scrap-app/deploy/rollback.sh
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/duckdns-update.sh /opt/scrap-app/deploy/duckdns-update.sh
 sudo install -m 644 -o root -g root /opt/scrap-app/src/deploy/logrotate.conf    /etc/logrotate.d/scrap-app
 # 배포 상태 폴더 (Phase 3에서 추가. 이미 있으면 그대로)
@@ -767,12 +770,15 @@ chk "저장소 사본이 main 브랜치"           test "$(sudo git -C $S rev-pa
 chk "저장소 사본이 origin/main 과 같음"    test "$(sudo git -C $S rev-parse HEAD)" = "$(sudo git -C $S rev-parse origin/main)"
 chk "compose 설치본 = 저장소"             sudo cmp -s $S/docker-compose.yml $A/docker-compose.yml
 chk "deploy.sh 설치본 = 저장소"           sudo cmp -s $S/deploy/deploy.sh $A/deploy/deploy.sh
+chk "rollback.sh 설치본 = 저장소"         sudo cmp -s $S/deploy/rollback.sh $A/deploy/rollback.sh
 chk "duckdns-update.sh 설치본 = 저장소"   sudo cmp -s $S/deploy/duckdns-update.sh $A/deploy/duckdns-update.sh
 chk "logrotate 설치본 = 저장소"           sudo cmp -s $S/deploy/logrotate.conf /etc/logrotate.d/scrap-app
 chk "compose root 644"                   test "$(sudo stat -c '%U %a' $A/docker-compose.yml)" = "root 644"
 chk "deploy.sh root 755"                 test "$(sudo stat -c '%U %a' $A/deploy/deploy.sh)" = "root 755"
+chk "rollback.sh root 755"               test "$(sudo stat -c '%U %a' $A/deploy/rollback.sh)" = "root 755"
 chk "state/ deploy 750"                  test "$(sudo stat -c '%U %a' $A/state)" = "deploy 750"
 chk "deploy.sh 문법"                      bash -n $A/deploy/deploy.sh
+chk "rollback.sh 문법"                    bash -n $A/deploy/rollback.sh
 chk "compose 구성 유효 (deploy 권한으로)"  sudo -u deploy -H docker compose -f $A/docker-compose.yml config -q
 chk "logrotate 설정 유효"                 sudo logrotate -d /etc/logrotate.d/scrap-app
 ```
@@ -956,57 +962,45 @@ chk "필수 검사에 frontend·backend" sh -c "gh api repos/$R/rulesets/$id --j
 ### 12-6. 수동 롤백·복구 (긴급할 때 사람만)
 
 평소 배포·롤백은 CI가 한다. 자동 롤백: 헬스체크가 실패하면 `deploy.sh`가 배포 직전 운영 버전(`state/current`)으로 되돌리고 실패로 끝난다 (상태 파일은 그대로).
-아래는 **헬스체크는 통과했지만 앱이 잘못 동작할 때**, 또는 **자동 롤백까지 실패했을 때**만 쓴다.
-
-**상태 보기**
-
-```bash
-cd /opt/scrap-app
-sudo cat state/current state/previous        # 위: 운영 중(마지막 성공 배포), 아래: 그 직전
-sudo tail -n 30 logs/deploy.log
-```
+아래는 **헬스체크는 통과했지만 앱이 잘못 동작할 때**, **자동 롤백까지 실패했을 때**, **`deploy.sh`가 "state 기록 실패"로 끝났을 때**만 쓴다.
 
 **방법 A (권장, GitHub이 될 때)** — Actions → Deploy → **되돌릴 버전의 예전 성공 실행** → `deploy` 잡의 **Re-run this job** → 승인. 같은 `deploy.sh` 경로(백업·헬스체크·상태 기록)를 그대로 탄다. GHCR의 옛 이미지는 지우지 않으므로 언제든 가능하다.
 
-**방법 B (GitHub·SSH 배포가 안 될 때, 서버에서 직접)**
+**방법 B (서버에서 직접) — `rollback.sh`**
 
-되돌릴 버전 `P`를 고른다:
-- 배포는 성공했는데 앱이 이상하다 → `state/previous`
-- 자동 롤백까지 실패해 사이트가 내려가 있다 → `state/current` (실패한 배포는 상태에 기록되지 않는다)
+`/opt/scrap-app/deploy/rollback.sh`(root 755, 11절로 설치)가 처음부터 끝까지 `deploy.sh`와 **같은 잠금**을 쥐고 실행한다 (CI 배포와 겹치지 않는다). 단계마다 ✅/❌ 줄을 출력하고, **❌가 나오면 그 자리에서 멈춘다** (뒤 단계로 넘어가지 않는다). 도메인·`.env` 값은 출력하지 않는다. 같은 줄이 `logs/deploy.log`에도 남는다.
+
+(1) 상태 보기 — 아무것도 바꾸지 않는다:
 
 ```bash
-cd /opt/scrap-app
-C=$(sudo cat state/current); P=$(sudo cat state/previous)    # 자동 롤백 실패 경우엔: P=$C
-echo "되돌릴 버전: ${P:0:12}"
-# deploy.sh 와 같은 잠금을 잡는다 → CI 배포가 진행 중이면 겹치지 않고 바로 실패한다.
-sudo -u deploy -H flock -n /opt/scrap-app/state/deploy.lock env IMAGE_TAG="$P" docker compose up -d --remove-orphans
-D=$(sudo sed -nE 's/^[[:space:]]*SITE_DOMAIN[[:space:]]*=[[:space:]]*["'"'"']?([^"'"'"' #]+).*/\1/p' .env | tail -n 1)
-sleep 20
-chk "되돌린 버전 health 200" curl -fs -o /dev/null --resolve "$D:443:127.0.0.1" "https://$D/api/health"
+sudo /opt/scrap-app/deploy/rollback.sh
 ```
 
-✅이고 `P`가 `state/previous`였다면, 다음 자동 배포가 올바른 버전으로 롤백하도록 상태 파일을 실제 운영 버전에 맞춘다 (`P=$C`였다면 할 필요 없다):
+(2) 상황에 맞는 명령 하나를 고른다:
+
+| 상황 | 명령 | state |
+|---|---|---|
+| 배포는 성공했는데 앱이 이상하다 | `sudo /opt/scrap-app/deploy/rollback.sh previous` | 성공하면 current ↔ previous 교환 (실제 운영 버전에 맞춤) |
+| 자동 롤백까지 실패해 사이트가 내려가 있다 | `sudo /opt/scrap-app/deploy/rollback.sh current` | 그대로 (실패한 배포는 기록되지 않았으므로 current가 마지막 정상 버전) |
+| `deploy.sh`가 "state 기록 실패"로 끝났다 (새 버전은 정상 운영 중) | 로그의 `운영 중: <SHA>`를 확인하고 마스터에게 알린다. state 디렉터리 권한(11-2 `state/ deploy 750`)부터 확인 | 사람이 맞춘다 |
+
+끝 줄이 `✅ ...`와 `완료 — 운영 중: <SHA>`면 성공이다. ❌ 줄이 나오면 그 줄만 마스터에게 알린다.
+
+**⚠️ DB까지 되돌리기 (새 버전이 DB 구조를 바꿔 옛 버전이 못 읽을 때만)** — 그 백업 이후 저장한 스크랩은 사라진다. 위 명령 뒤에 `--restore-db <백업 파일 이름>`을 붙인다. 백업 이름은 (1)의 `백업:` 줄 또는 `sudo ls -l /opt/scrap-app/backups/`에서 고른다 (`predeploy-<UTC 시각>-<그때 운영 중이던 SHA 앞 12자>.db`).
 
 ```bash
-sudo -u deploy sh -c "printf '%s\n' '$C' > state/previous && printf '%s\n' '$P' > state/current"
-chk "state/current = 되돌린 버전" test "$(sudo cat state/current)" = "$P"
+sudo /opt/scrap-app/deploy/rollback.sh previous --restore-db predeploy-<시각>-<sha>.db
 ```
 
-**⚠️ DB 되돌리기 (새 버전이 DB 구조를 바꿔 옛 버전이 못 읽을 때만)** — 배포 직전 백업은 `backups/predeploy-<UTC 시각>-<운영 중이던 SHA 앞 12자>.db`. 되돌리면 그 백업 이후 저장한 스크랩은 사라지므로, **먼저 현재 DB를 통째로 백업**한다.
+스크립트가 하는 순서: 백업 파일 이름·형식 확인 → api 정지 → **현재 DB(`scrap.db`, `-wal`, `-shm`)를 `/root/db-before-restore-<시각>/`에 복사하고 원본과 내용 비교** → 일치가 확인된 뒤에만 `-wal`/`-shm` 삭제 + 백업 설치(10001, 600) → 컨테이너 교체 → 헬스체크 → state 갱신.
+보존 단계에서 실패하면 DB는 건드리지 않은 채 멈춘다 (api는 정지 상태이므로 `sudo /opt/scrap-app/deploy/rollback.sh current`로 다시 올린다).
+
+복원 후 확인:
 
 ```bash
-cd /opt/scrap-app
-sudo ls -l backups/                                        # 쓸 백업 파일 이름 확인
-B=backups/predeploy-<시각>-<sha>.db                        # ← 고른 파일로
-sudo -u deploy -H env IMAGE_TAG="$P" docker compose stop api
-K=/root/db-before-restore-$(date +%Y%m%d%H%M%S); sudo install -d -m 700 "$K"
-sudo sh -c "cp -a /opt/scrap-app/data/. '$K'/"              # 현재 DB(+ -wal, -shm) 백업
-sudo rm -f data/scrap.db-wal data/scrap.db-shm
-sudo install -m 600 -o 10001 -g 10001 "$B" data/scrap.db
-sudo -u deploy -H env IMAGE_TAG="$P" docker compose up -d
-chk "현재 DB 백업 있음" sudo test -s "$K/scrap.db"
-sleep 20
-chk "복원 후 health 200" curl -fs -o /dev/null --resolve "$D:443:127.0.0.1" "https://$D/api/health"
+chk "복원 전 DB 보존본 있음" sh -c 'sudo sh -c "ls -d /root/db-before-restore-*/scrap.db" | grep -q .'
+chk "data/scrap.db 소유 10001, 600" test "$(sudo stat -c '%u %a' /opt/scrap-app/data/scrap.db)" = "10001 600"
+chk "api healthy" sh -c "sudo docker inspect -f '{{.State.Health.Status}}' scrap-app-api-1 | grep -qx healthy"
 ```
 
 정기 백업·외부 복사·복원 절차 전체는 Phase 8에서 이 문서에 추가한다.

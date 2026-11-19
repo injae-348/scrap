@@ -18,5 +18,8 @@ frontend/coverage/
 frontend/**/*.tsbuildinfo
 **/.env
 **/.env.*
+**/*.db
+**/*.db-*
+**/*.sqlite*
 **/*.log
 **/.DS_Store

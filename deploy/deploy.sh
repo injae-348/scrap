@@ -21,7 +21,7 @@
 #
 # 종료 코드: 0 = 성공, 1 = 실패(롤백 여부는 로그 참고), 2 = 잘못된 요청(SHA 형식 아님)
 #
-# 수동 실행(긴급 시 사람만, README 12-6): sudo -u deploy -H env SSH_ORIGINAL_COMMAND=<SHA> /opt/scrap-app/deploy/deploy.sh
+# 사람이 직접 되돌릴 때는 이 스크립트 대신 deploy/rollback.sh 를 쓴다 (README 12-6).
 set -euo pipefail
 umask 077
 # 강제 명령으로 실행될 때의 환경을 믿지 않는다. (sshd는 클라이언트가 보낸 LANG/LC_* 를 받아들일 수 있다)
@@ -41,6 +41,7 @@ COMPOSE_FILE="${APP_DIR}/docker-compose.yml"
 KEEP_BACKUPS=14     # 배포 직전 백업 보관 개수
 HEALTH_TIMEOUT=90   # 헬스체크 최대 대기(초)
 HEALTH_INTERVAL=3   # 헬스체크 간격(초)
+UP_TIMEOUT=300      # docker compose up 상한(초). api healthy 대기(최대 약 2분)를 넉넉히 덮는다.
 
 log() {
   # stderr 로 쓴다: $(...) 안에서 호출돼도 출력이 값에 섞이지 않는다 (stdout·stderr 모두 로그로 간다).
@@ -80,7 +81,7 @@ flock -n 9 || die "다른 배포가 진행 중이다 (${STATE_DIR}/deploy.lock)"
 cd "$APP_DIR"
 [[ -r $COMPOSE_FILE ]] || die "compose 파일을 읽을 수 없음: ${COMPOSE_FILE}"
 [[ -r $ENV_FILE ]] || die ".env 를 읽을 수 없음: ${ENV_FILE}"
-for cmd in docker curl flock find; do
+for cmd in docker curl flock find timeout; do
   command -v "$cmd" >/dev/null || die "명령 없음: ${cmd}"
 done
 
@@ -88,6 +89,22 @@ done
 export IMAGE_TAG="$NEW_SHA"
 dc() {
   docker compose --project-directory "$APP_DIR" -f "$COMPOSE_FILE" "$@"
+}
+
+# 컨테이너 교체에 상한을 둔다. 만료되면(124, 강제 종료 시 137) 실패로 보고 호출한 쪽이 롤백한다.
+# timeout 은 함수를 실행하지 못하므로 docker compose 를 직접 부른다. IMAGE_TAG 는 호출 시 앞에 붙인 값이 전달된다.
+dc_up() {
+  local rc
+  if timeout --kill-after=30 "$UP_TIMEOUT" \
+    docker compose --project-directory "$APP_DIR" -f "$COMPOSE_FILE" up -d --remove-orphans; then
+    return 0
+  else
+    rc=$?
+  fi
+  if [[ $rc -eq 124 || $rc -eq 137 ]]; then
+    log "docker compose up 이 ${UP_TIMEOUT}초 안에 끝나지 않아 중단함 (종료 코드 ${rc})"
+  fi
+  return "$rc"
 }
 
 # ── 상태 읽기 ─────────────────────────────────────
@@ -99,10 +116,34 @@ read_sha_file() {
   printf '%s' "$v"
 }
 
-write_state() {
-  # 임시 파일에 쓰고 mv 로 바꿔 끼운다 (중간에 끊겨도 반쯤 쓴 파일이 남지 않게).
-  printf '%s\n' "$2" >"${STATE_DIR}/.$1.tmp"
-  mv -f "${STATE_DIR}/.$1.tmp" "${STATE_DIR}/$1"
+# 상태 기록: 성공한 새 버전을 current 로, 배포 직전 운영 버전을 previous 로.
+# - 두 값을 먼저 임시 파일로 다 써 두고(실패하면 아무것도 바뀌지 않음), 그다음 rename(mv, 원자적)으로 바꿔 끼운다.
+# - current 를 먼저 바꾼다: 다음 배포의 자동 롤백 대상은 current 이므로 이것이 실제 운영 버전과 맞는 것이 중요하다.
+#   current 교체 뒤 previous 교체만 실패하면 previous 가 한 단계 옛 값으로 남을 뿐이다 (수동 롤백용 값).
+# - 실패하면 0 이 아닌 값을 돌려준다 (set -e 로 말없이 끝나지 않게 호출한 쪽이 처리).
+record_state() {
+  local new=$1 old=$2 tmp_cur="${STATE_DIR}/.current.tmp" tmp_prev="${STATE_DIR}/.previous.tmp"
+  if ! printf '%s\n' "$new" >"$tmp_cur" 2>/dev/null; then
+    rm -f "$tmp_cur"
+    log "state 기록 실패: 임시 파일을 쓰지 못함 (state 는 바뀌지 않음)"
+    return 1
+  fi
+  if [[ -n $old ]] && ! printf '%s\n' "$old" >"$tmp_prev" 2>/dev/null; then
+    rm -f "$tmp_cur" "$tmp_prev"
+    log "state 기록 실패: 임시 파일을 쓰지 못함 (state 는 바뀌지 않음)"
+    return 1
+  fi
+  if ! mv -f "$tmp_cur" "${STATE_DIR}/current"; then
+    rm -f "$tmp_cur" "$tmp_prev"
+    log "state 기록 실패: current 를 바꾸지 못함 (state 는 바뀌지 않음)"
+    return 1
+  fi
+  if [[ -n $old ]] && ! mv -f "$tmp_prev" "${STATE_DIR}/previous"; then
+    rm -f "$tmp_prev"
+    log "state 기록 실패: current 는 새 버전으로 바뀌었지만 previous 를 바꾸지 못함 (previous 가 한 단계 옛 값)"
+    return 1
+  fi
+  return 0
 }
 
 CUR_SHA="$(read_sha_file current)"
@@ -280,7 +321,7 @@ rollback() {
     exit 1
   fi
   log "롤백: $(short "$target") 로 되돌리는 중"
-  if IMAGE_TAG="$target" dc up -d --remove-orphans && wait_healthy; then
+  if IMAGE_TAG="$target" dc_up && wait_healthy; then
     log "롤백 성공: $(short "$target") 운영 중 (state 는 바뀌지 않음)"
   else
     log "롤백도 실패 — 사이트가 내려가 있을 수 있다. 사람이 README 12-6 으로 복구"
@@ -290,19 +331,20 @@ rollback() {
 
 # ── 5. 교체 ───────────────────────────────────────
 log "컨테이너 교체: up -d (api healthy 후 web 시작)"
-if ! dc up -d --remove-orphans; then
-  log "docker compose up 실패 (api 가 healthy 가 되지 못했을 수 있음)"
+if ! dc_up; then
+  log "docker compose up 실패 (api 가 healthy 가 되지 못했거나 시간 초과)"
   rollback
 fi
 log "헬스체크: https://<SITE_DOMAIN>/api/health (로컬 Caddy 경유, 최대 ${HEALTH_TIMEOUT}초)"
 wait_healthy || rollback
 
 # ── 6. 성공: 상태 기록 ────────────────────────────
+# 새 버전은 이미 healthy 로 운영 중이다. 기록에 실패해도 롤백하지 않고(정상 버전을 내리지 않음) 사람에게 넘긴다.
 if [[ $NEW_SHA != "$CUR_SHA" ]]; then
-  if [[ -n $CUR_SHA ]]; then
-    write_state previous "$CUR_SHA"
+  if ! record_state "$NEW_SHA" "$CUR_SHA"; then
+    log "배포는 성공(새 버전 $(short "$NEW_SHA") 운영 중)했지만 state 기록 실패 — README 12-6 으로 사람이 state 를 맞춘다 (운영 중: ${NEW_SHA}, 배포 직전: ${CUR_SHA:-없음})"
+    exit 1
   fi
-  write_state current "$NEW_SHA"
 fi
 PREV_SHA="$(read_sha_file previous)"
 
