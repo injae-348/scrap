@@ -2,7 +2,7 @@
 name: security-reviewer
 description: 인증, 세션, TOTP, 쿠키, CSRF, 비밀값 노출, Claude API 키 관리, 배포 설정의 보안을 검토할 때 사용. 코드를 수정하지 않고 검토 결과 문서만 작성한다. 인증 단계가 끝난 뒤와 배포 전에 반드시 사용한다.
 tools: Read, Glob, Grep, Write
-model: sonnet
+model: opus
 hooks:
   PreToolUse:
     - matcher: "Write|Edit|MultiEdit|NotebookEdit"
