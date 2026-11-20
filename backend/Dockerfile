@@ -22,8 +22,11 @@ ENV PIP_NO_CACHE_DIR=1 \
 RUN python -m venv /opt/venv
 ENV PATH=/opt/venv/bin:$PATH
 
+# requirements.txt 는 하위 의존성까지 버전·해시가 고정돼 있다 (requirements.in 에서 uv 로 생성, backend/README.md).
+# --require-hashes: 해시가 다른 파일은 설치하지 않는다. --no-deps: 목록에 없는 패키지를 몰래 받지 않는다.
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt
+RUN pip install --no-cache-dir --require-hashes --no-deps -r /tmp/requirements.txt \
+ && pip check
 
 # ── runtime ─────────────────────────────────────────
 FROM ${PYTHON_IMAGE} AS runtime
@@ -49,6 +52,7 @@ RUN python -m compileall -q /app/app
 USER 10001:10001
 EXPOSE 8000
 
+# 이벤트 루프·HTTP 파서는 uvicorn 기본값(auto)이 설치된 uvloop·httptools 를 고른다 (requirements.in).
 # 기본 실행: 1 worker (1코어/1GB 서버). 프록시 헤더 신뢰 범위(--forwarded-allow-ips)는
 # 네트워크 구성을 아는 docker-compose.yml 의 command 에서 지정한다 (기본값은 127.0.0.1만 신뢰).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-server-header"]

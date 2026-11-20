@@ -43,6 +43,7 @@
 **/htmlcov/
 tests/
 requirements-dev.txt
+requirements*.in
 Dockerfile
 .dockerignore
 **/.DS_Store
