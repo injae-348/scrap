@@ -1,4 +1,4 @@
-# Phase 2 첫 HTTPS 확인용 임시 Caddyfile (deploy/README.md 8단계).
+# Phase 2 첫 HTTPS 확인용 임시 Caddyfile — 최초 구축 때 한 번 쓴 일회성 구성이다. 운영에는 쓰지 않는다 (deploy/README.md 8절).
 # 운영 Caddyfile(deploy/Caddyfile)과 같은 전역 설정을 써서, 여기서 받은 인증서를 운영 web 컨테이너가 그대로 이어 쓴다.
 
 {

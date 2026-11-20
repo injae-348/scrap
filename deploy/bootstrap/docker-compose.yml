@@ -1,4 +1,4 @@
-# Phase 2 첫 HTTPS 확인용 임시 구성 (deploy/README.md 8단계).
+# Phase 2 첫 HTTPS 확인용 임시 구성 — 최초 구축 때 한 번 쓴 일회성 구성이다. 운영에는 쓰지 않는다 (deploy/README.md 8절).
 # 아직 GHCR 이미지가 없으므로 공식 caddy 이미지 + 임시 응답으로 인증서 발급만 확인한다.
 #
 # 실행 (서버, /opt/scrap-app 에서):
@@ -8,7 +8,7 @@
 #
 # 프로젝트 이름을 운영(scrap-app)과 다르게 두어, 이 파일로 down 해도 운영 컨테이너에 영향이 없게 한다.
 # 인증서 폴더는 운영 compose와 같은 /opt/scrap-app/caddy/{data,config} 를 써서, 여기서 받은 인증서를 운영 구성이 이어받는다.
-# 기존 서버의 다른 프로젝트(conversation_*, caddy-test_*)와 프로젝트·볼륨 이름이 겹치지 않는다 (볼륨을 쓰지 않음).
+# 이름 있는 볼륨을 쓰지 않으므로 서버의 다른 compose 프로젝트와 볼륨 이름이 겹치지 않는다.
 
 name: scrap-bootstrap
 

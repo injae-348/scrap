@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.config import DEFAULT_DB_PATH, load_settings
+from tests.conftest import FAKE_SESSION_SECRET
 
 DOC_PATHS = [
     "/docs",
@@ -35,12 +36,14 @@ def test_api_docs_disabled_by_default(make_client, tmp_path: Path, path: str) ->
 
 @pytest.mark.parametrize("path", ["/api/docs", "/api/redoc", "/api/openapi.json"])
 def test_api_docs_can_be_enabled(make_client, tmp_path: Path, path: str) -> None:
-    client = make_client(DB_PATH=str(tmp_path / "test.db"), ENABLE_API_DOCS="1")
+    # 운영(SITE_DOMAIN 있음)에서는 문서를 켤 수 없으므로 로컬 개발 설정으로 만든다.
+    client = make_client(DB_PATH=str(tmp_path / "test.db"), ENABLE_API_DOCS="1", SITE_DOMAIN="")
 
     assert client.get(path).status_code == 200
 
 
 def test_default_db_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("SESSION_SECRET", FAKE_SESSION_SECRET)
     monkeypatch.delenv("DB_PATH", raising=False)
     assert load_settings().db_path == DEFAULT_DB_PATH
 

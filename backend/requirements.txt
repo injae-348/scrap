@@ -1,3 +1,9 @@
 # 런타임 의존성 (api 이미지에 설치된다). 버전은 == 로 고정한다.
+# 모두 linux/amd64·cp312용 휠이 있어 slim 이미지에서 C 컴파일 없이 설치된다.
 fastapi==0.165.0
 uvicorn[standard]==0.54.0
+# 인증 (Phase 4)
+argon2-cffi==25.1.0
+argon2-cffi-bindings==26.2.0  # argon2-cffi 의 C 바인딩 (abi3 manylinux 휠)
+pyotp==2.12.1
+qrcode==8.2  # SVG 출력만 사용 → Pillow 불필요
