@@ -93,12 +93,13 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 
 ### Phase 4. 인증
 > 결정 사항 (2026-11-20 사용자 확정): 세션은 180일 미사용 시 만료(쿠키 400일, 접속 시 갱신). 최초 가입은 `SETUP_TOKEN`으로 보호(도메인은 인증서 공개 기록으로 이미 알려져 있음). 프론트 연동은 Phase 6. 서버 수동 점검(`SESSION_SECRET`·`SETUP_TOKEN`)과 최초 가입 절차는 README에 쓰지 않고 마스터가 세션에서 안내한다. 리뷰: `docs/reviews/qa-4-20261120.md` (보안 리뷰는 로컬 전용).
-- [ ] 최초 가입, TOTP 등록, 복구 코드
-- [ ] 로그인(비밀번호 → TOTP), 세션 쿠키, 로그아웃, 전체 로그아웃, 기기 목록
-- [ ] 로그인 실패 제한 (공통 요청 제한 미들웨어로 만들어 인증 없는 `/api/health`에도 적용 검토)
-- [ ] `SESSION_SECRET`이 `.env.example` 자리표시자이거나 너무 짧으면 앱 기동 거부
-- [ ] 최초 가입 토큰(`SETUP_TOKEN`), 운영 설정 가드(운영에서 개발용 설정이면 기동 거부)
-- [ ] security-reviewer 검토 및 조치
+- [x] 최초 가입, TOTP 등록, 복구 코드
+- [x] 로그인(비밀번호 → TOTP), 세션 쿠키, 로그아웃, 전체 로그아웃, 기기 목록
+- [x] 로그인 실패 제한 (공통 요청 제한 미들웨어로 만들어 인증 없는 `/api/health`에도 적용 검토)
+- [x] `SESSION_SECRET`이 `.env.example` 자리표시자이거나 너무 짧으면 앱 기동 거부
+- [x] 최초 가입 토큰(`SETUP_TOKEN`), 운영 설정 가드(운영에서 개발용 설정이면 기동 거부)
+- [x] security-reviewer 검토 및 조치 (중간 이상 지적은 Phase 4에서 수정, 나머지는 Phase 5~8로 이동)
+- [x] 운영 배포 (2026-11-20 PR #7 병합 → 승인 → 배포 성공, 외부 health·`/api/auth/status` 확인. 최초 가입은 Phase 6 가입 화면에서 진행)
 
 ### Phase 5. 스크랩 API
 - [ ] 스크랩 CRUD, 출처 자동 판별, 주제 관리, 좋아요, 마감일
