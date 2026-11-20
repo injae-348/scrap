@@ -122,3 +122,10 @@ def do_login(client: TestClient, clock: FakeClock, secret: str) -> None:
     )
     assert res.status_code == 204, res.text
     clock.advance(30)
+
+
+@pytest.fixture
+def user(client: TestClient, clock: FakeClock) -> TestClient:
+    """가입을 마쳐 로그인된 클라이언트 (Phase 5 API 테스트용)."""
+    do_setup(client, clock)
+    return client

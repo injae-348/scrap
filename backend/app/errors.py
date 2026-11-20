@@ -21,6 +21,7 @@ _DEFAULTS: dict[int, tuple[str, str]] = {
     403: ("forbidden", "권한이 없습니다."),
     404: ("not_found", "요청한 항목을 찾을 수 없습니다."),
     405: ("method_not_allowed", "허용되지 않는 요청 방식입니다."),
+    413: ("payload_too_large", "요청 본문이 너무 큽니다."),
     429: ("too_many_requests", "요청이 너무 많습니다. 잠시 후 다시 시도해 주세요."),
     500: ("internal_error", "서버 오류가 발생했습니다."),
     503: ("service_unavailable", "서비스를 일시적으로 사용할 수 없습니다."),

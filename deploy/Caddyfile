@@ -15,6 +15,15 @@
 	servers {
 		# HTTP/3(UDP 443)는 끈다. 방화벽(OCI 보안 목록·iptables)을 TCP 80/443만으로 단순하게 유지.
 		protocols h1 h2
+
+		# 요청 읽기 시간 상한. 파일 업로드가 없고 본문은 작으므로 짧게 잡는다.
+		#   read_header: 요청 헤더를 다 받기까지 (Caddy 기본 1분보다 짧게).
+		#   read_body  : 헤더를 포함한 요청 전체를 다 받기까지. 응답을 만드는 시간(API 처리)에는 걸리지 않는다.
+		# 연결 유지 중 대기(idle)는 Caddy 기본값을 쓴다.
+		timeouts {
+			read_header 10s
+			read_body 30s
+		}
 	}
 }
 
@@ -50,6 +59,12 @@
 
 	# API: 경로를 그대로(/api/...) FastAPI로 넘긴다. X-Forwarded-For/Proto 는 Caddy가 자동으로 붙인다.
 	handle /api/* {
+		# 인증 경로(/api/auth/...)의 본문은 짧은 JSON뿐이므로 상한을 따로 낮춘다.
+		# 위의 사이트 전체 상한(5MB)과 겹쳐 적용되며, 더 작은 쪽이 효력을 가진다.
+		# 앱도 자체 상한을 두므로 여기는 그보다 느슨한 바깥 경계다.
+		request_body /api/auth/* {
+			max_size 64KB
+		}
 		reverse_proxy api:8000
 	}
 

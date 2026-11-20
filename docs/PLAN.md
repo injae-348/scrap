@@ -117,11 +117,15 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] (Phase 4에서 넘김) 인증 화면 연동: 가입 화면 `setup_token` 입력칸, `error.code`별 화면 처리(401은 `unauthorized`일 때만 로그인 화면), 복구 코드 한 번만 표시, 로그인 입력칸 iOS 속성, 기기 목록 `last_seen_at`, 전체 로그아웃 후 로그인 화면 (`docs/reviews/qa-4-20261120.md` 5절)
 - [ ] (Phase 4에서 넘김) 개발 설정: Vite `/api` 프록시 + `COOKIE_SECURE=0`·`ALLOWED_ORIGINS`, 서비스워커 캐시에서 `/api/*` 제외
 - [ ] (Phase 4에서 넘김) `VITE_` 접두사 변수는 공개 값 전용(번들·공개 이미지에 들어감) 규칙 문서화, CI에서 빌드 결과물에 비밀값 패턴이 없는지 검사
+- [ ] (Phase 5에서 넘김, 착수 조건) 메모 마크다운은 원시 HTML을 끄거나 무해화해서 렌더링, 링크는 http/https만 `rel="noopener noreferrer"`, 제목·메모에 `dangerouslySetInnerHTML` 금지 + 렌더링 단위 테스트
+- [ ] (Phase 5에서 넘김) 목 데이터·오류 코드·커서를 서버 기준으로 정리 (`docs/reviews/qa-5-20261120.md`), PATCH에는 바뀐 필드만, 필터가 바뀌면 커서 버리기, 미리보기 로딩은 입력을 막지 않게
+- [ ] (Phase 5에서 넘김, API 결정) 목록 응답의 메모를 앞부분만 줄지 결정 (상세에서 전문)
 
 ### Phase 7. AI 기능
 - [ ] AI로 채우기 (본문 추출 → Claude 구조화 출력 → 제안 표시)
 - [ ] AI 검색 (도구 호출 루프, 결과 카드)
 - [ ] (Phase 4에서 넘김) 본문 추출은 http/https 스킴만 허용
+- [ ] (Phase 5에서 넘김, 착수 조건) 본문 추출은 제목 미리보기의 안전한 가져오기 구현을 공통 모듈로 분리해 재사용 (다른 HTTP 클라이언트 사용 금지), HTML 파싱 입력 크기 상한과 파싱 전용 동시 실행 제한
 
 ### Phase 8. 운영
 - [ ] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업
@@ -131,6 +135,8 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] (Phase 4에서 넘김) 계정 복구 절차 (인증 앱과 복구 코드를 모두 잃은 경우)
 - [ ] (Phase 4에서 넘김) 운영 문서에 비밀값을 화면에 펼치는 진단 명령 금지 목록, 컨테이너 로그 크기 상한, (선택) compose `secrets:`로 비밀값 전달
 - [ ] (Phase 4에서 넘김) infra 규칙: 비밀값을 `--build-arg`·이미지 `ENV`로 넣지 않는다 (공개 이미지 `docker history`로 보임)
+- [ ] (Phase 5에서 넘김) 다음 compose 갱신 때: 컨테이너 로그 크기 상한, api 기동 명령에 `--loop=uvloop --http=httptools` 명시
+- [ ] (Phase 5에서 넘김) 접근 로그에서 쿼리 문자열(검색어·커서) 빼기, pip-audit 정기 실행(예: 주 1회 예약 워크플로), `scraps_fts` 무결성 확인·재구성 절차 문서화
 
 ## 도메인 (DuckDNS)
 

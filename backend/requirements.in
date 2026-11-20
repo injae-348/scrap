@@ -1,0 +1,15 @@
+# 런타임 직접 의존성 (api 이미지에 설치된다). 버전은 == 로 고정한다.
+# 이 파일을 고친 뒤에는 requirements.txt 와 requirements-dev.txt 를 다시 만든다 (backend/README.md "의존성").
+fastapi==0.165.0
+# uvicorn[standard] 대신 필요한 것만: HTTP 파서(httptools)·이벤트 루프(uvloop).
+# websockets·watchfiles(개발용 --reload)·python-dotenv·PyYAML 은 넣지 않는다.
+uvicorn==0.54.0
+httptools==0.9.0
+uvloop==0.23.0; sys_platform != "win32"
+# 인증 (Phase 4)
+argon2-cffi==25.1.0
+pyotp==2.12.1
+qrcode==8.2  # SVG 출력만 사용 → Pillow 불필요
+# 제목 미리보기(Phase 5): 연결은 httpcore 를 직접 쓰고(검사한 IP로 고정), 인증서 묶음은 certifi.
+httpcore==1.0.9
+certifi==2026.10.23

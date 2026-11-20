@@ -24,27 +24,40 @@ from app.auth.router import (
     TOTP_RESET_MAX_PENDING,
     TOTP_RESET_TTL_SECONDS,
 )
+from app.auth.router import public_router as auth_public_router
 from app.auth.router import router as auth_router
 from app.clock import Clock
 from app.config import Settings, load_settings
 from app.csrf import OriginCheckMiddleware
 from app.db import Database, DatabaseUnavailableError, check_database
 from app.errors import ApiError, error_response, register_error_handlers
+from app.guard import RequestGuardMiddleware
 from app.headers import NoStoreMiddleware
 from app.memstore import TTLStore
+from app.meta import PREVIEW_REQUESTS_PER_MINUTE
+from app.meta import router as meta_router
+from app.preview import PreviewFetcher
 from app.ratelimit import (
     AccountAttemptLimiter,
     LoginAttemptLimiter,
     RateLimitMiddleware,
     RequestRateLimiter,
 )
+from app.routing import assert_default_deny, build_protected_router
+from app.scraps import router as scraps_router
+from app.sources import router as sources_router
+from app.topics import router as topics_router
 
 logger = logging.getLogger("app")
 
-router = APIRouter(prefix="/api")
+# 인증 불필요 라우터. 여기에는 health 만 둔다 (공개 목록: app/routing.py PUBLIC_ENDPOINTS).
+public_router = APIRouter(prefix="/api")
+
+# 세션 필수 라우터 목록. 새 기능 라우터는 여기에 추가한다 (상위 라우터가 인증을 건다).
+PROTECTED_ROUTERS = (auth_router, scraps_router, sources_router, topics_router, meta_router)
 
 
-@router.get("/health")
+@public_router.get("/health")
 def health(request: Request) -> dict[str, str]:
     """배포 후 헬스체크용. 인증 불필요. DB 연결 + 마이그레이션 적용까지 확인한다.
 
@@ -135,10 +148,14 @@ def create_app(settings: Settings | None = None, clock: Clock | None = None) -> 
     app.state.login_limiter = LoginAttemptLimiter(clock)
     app.state.account_limiter = AccountAttemptLimiter(clock, app.state.db.connect)
     app.state.request_limiter = RequestRateLimiter(clock, settings.requests_per_minute)
+    app.state.preview_fetcher = PreviewFetcher()
+    app.state.preview_limiter = RequestRateLimiter(clock, PREVIEW_REQUESTS_PER_MINUTE)
 
     register_error_handlers(app)
     app.add_exception_handler(PasswordHasherBusy, _handle_hasher_busy)
-    # 나중에 추가한 미들웨어가 바깥쪽: no-store 헤더 → 요청 제한 → 출처 확인 → 라우터 순서.
+    # 나중에 추가한 미들웨어가 바깥쪽:
+    # no-store 헤더 → 요청 제한 → 출처 확인 → 본문 상한·세션 사전 확인 → 라우터 순서.
+    app.add_middleware(RequestGuardMiddleware, api=app)
     app.add_middleware(OriginCheckMiddleware, allowed_origins=settings.allowed_origins)
     app.add_middleware(
         RateLimitMiddleware,
@@ -146,8 +163,11 @@ def create_app(settings: Settings | None = None, clock: Clock | None = None) -> 
         warn_private_clients=settings.production,
     )
     app.add_middleware(NoStoreMiddleware)
-    app.include_router(router)
-    app.include_router(auth_router)
+    # 인증 기본 거부: 공개 6개만 공개 라우터에, 나머지 /api/* 는 세션 필수 상위 라우터 아래에.
+    app.include_router(public_router)
+    app.include_router(auth_public_router)
+    app.include_router(build_protected_router(PROTECTED_ROUTERS))
+    assert_default_deny(app)
     return app
 
 

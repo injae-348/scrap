@@ -52,7 +52,10 @@ from app.db import get_db, transaction
 from app.errors import ApiError
 from app.ratelimit import AttemptRejected, AttemptSlot, ReservingLimiter, client_key
 
-router = APIRouter(prefix="/api/auth")
+# 인증 불필요 엔드포인트 (app/routing.py PUBLIC_ENDPOINTS). 앱에 직접 붙인다.
+public_router = APIRouter(prefix="/api/auth")
+# 세션 필수 엔드포인트. app/routing.py 의 세션 필수 상위 라우터(/api) 아래에 붙는다.
+router = APIRouter(prefix="/auth")
 
 SETUP_TTL_SECONDS = 10 * 60
 SETUP_MAX_PENDING = 8
@@ -270,7 +273,7 @@ def _load_user(conn: sqlite3.Connection, user_id: int) -> sqlite3.Row | None:
 # ── 상태 ────────────────────────────────────────────
 
 
-@router.get("/status")
+@public_router.get("/status")
 def status(
     request: Request,
     response: Response,
@@ -285,7 +288,7 @@ def status(
 # ── 최초 가입 ────────────────────────────────────────
 
 
-@router.post("/setup")
+@public_router.post("/setup")
 def setup(
     body: SetupBody,
     request: Request,
@@ -315,7 +318,7 @@ def setup(
     return {"qr_data_url": totp_qr_data_url(secret, username), "secret": secret}
 
 
-@router.post("/setup/verify")
+@public_router.post("/setup/verify")
 def setup_verify(
     body: CodeBody,
     request: Request,
@@ -384,7 +387,7 @@ def _invalid_credentials() -> ApiError:
     return ApiError(401, "invalid_credentials", "아이디 또는 비밀번호가 올바르지 않습니다.")
 
 
-@router.post("/login")
+@public_router.post("/login")
 def login(
     body: Credentials,
     request: Request,
@@ -467,7 +470,7 @@ def _verify_challenge(
     return user
 
 
-@router.post("/login/verify", status_code=204)
+@public_router.post("/login/verify", status_code=204)
 def login_verify(
     body: LoginVerifyBody,
     request: Request,

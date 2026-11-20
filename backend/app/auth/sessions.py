@@ -1,9 +1,9 @@
 """세션 쿠키·세션 테이블과 인증 의존성.
 
-Phase 5 이후 라우터는 `get_current_session`을 의존성으로 쓴다:
+인증은 기본 거부 구조다 (app/routing.py): `/api/*` 라우터는 세션 필수 상위 라우터 아래에 붙으므로
+따로 의존성을 걸지 않아도 세션이 없으면 401이다. 세션 값이 필요한 라우트만 인자로 받는다:
 
-    router = APIRouter(prefix="/api", dependencies=[Depends(get_current_session)])
-    # 또는 라우트 인자로 session: CurrentSession = Depends(get_current_session)
+    session: CurrentSession = Depends(get_current_session)
 
 규칙 (docs/API.md 인증 세부 규칙)
 - 쿠키: HttpOnly, Secure, SameSite=Lax, Path=/, Max-Age 400일. 세션이 확인될 때마다 쿠키를 다시 내려
@@ -17,12 +17,12 @@ Phase 5 이후 라우터는 `get_current_session`을 의존성으로 쓴다:
 import sqlite3
 from dataclasses import dataclass
 
-from fastapi import Depends, Request, Response
+from fastapi import Request, Response
 
 from app.auth.crypto import TokenHasher, new_token
 from app.clock import Clock, from_iso, to_iso
 from app.config import Settings
-from app.db import get_db
+from app.db import Database, DatabaseUnavailableError
 from app.errors import ApiError
 
 SESSION_COOKIE_MAX_AGE = 400 * 24 * 60 * 60
@@ -141,13 +141,23 @@ def resolve_session(
     return session
 
 
-def get_current_session(
-    request: Request,
-    response: Response,
-    conn: sqlite3.Connection = Depends(get_db),  # noqa: B008
-) -> CurrentSession:
-    """인증이 필요한 라우트의 의존성. 세션이 없거나 만료되면 401 `unauthorized`."""
-    session = resolve_session(request, response, conn)
+def get_current_session(request: Request, response: Response) -> CurrentSession:
+    """인증이 필요한 라우트의 의존성. 세션이 없거나 만료되면 401 `unauthorized`.
+
+    세션 확인용 DB 연결은 확인이 끝나면 바로 닫는다. 라우트가 DB를 쓰면 `get_db`로 따로 받는다
+    (오래 걸리는 라우트가 연결을 들고 있지 않게 — 예: 제목 미리보기).
+    """
+    database: Database = request.app.state.db
+    try:
+        conn = database.connect()
+    except DatabaseUnavailableError as exc:
+        raise ApiError(503, "db_unavailable", "데이터베이스에 연결할 수 없습니다.") from exc
+    try:
+        session = resolve_session(request, response, conn)
+    finally:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        conn.close()
     if session is None:
         raise ApiError(401, "unauthorized", "로그인이 필요합니다.")
     return session
