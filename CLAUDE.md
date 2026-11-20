@@ -83,12 +83,13 @@ docker-compose.yml
 - 데이터: SQLite DB(`*.db`, `*.sqlite*`, `data/`), 백업(`backups/`, `*.bak`), 로그(`logs/`, `*.log`), Caddy 인증서(`caddy_data/`)
 - 인증 산출물: TOTP 비밀값·QR 이미지, 복구 코드 파일
 - 보안 리뷰 결과: `docs/reviews/security-*.md` (조치 전 취약점 노출 방지, 로컬에만 보관). QA 점검 중 나온 보안 지적도 `qa-*.md`에 쓰지 않고 `security-qa-*.md`로 분리한다
-- 개인 설정: `.claude/settings.local.json`, `CLAUDE.local.md`
+- 개인 설정·로컬 문서: `.claude/settings.local.json`, `CLAUDE.local.md`, `*.local.md`(예: `deploy/README.local.md` — 서버 고유 기록·일회성 작업)
 
 ### 파일 내용에도 넣지 않는 값 (코드·문서·주석·테스트·커밋 메시지 모두)
 - 실제 DuckDNS 서브도메인, 서버 공인 IP, 서버 사용자 이름·경로 외의 접속 정보 → `<이름>.duckdns.org`, `SITE_DOMAIN` 같은 자리표시자·환경변수로 쓴다
 - API 키·토큰·비밀번호의 실제 값 (예시는 `sk-ant-xxxx`처럼 명백한 가짜 값)
 - 개인정보: 이메일, 실명, 전화번호, 실제 스크랩 데이터. 목 데이터와 테스트 데이터는 가짜로 만든다
+- **보안 약점·운영 이력**: 해결되지 않은 약점, 공략에 쓰일 수 있는 동작(예: 어떤 조건에서 제한이 풀리는지), 키·비밀값 노출 이력, 서버 고유 상태 기록. 이런 내용은 로컬 전용 `docs/reviews/security-*.md` 또는 `deploy/README.local.md`에만 쓴다. 공개 파일에는 설계를 중립적으로 설명하고, 로컬 리뷰 ID(P4-1 등)를 근거로 달지 않는다. PLAN에 넘길 때도 "무엇을 할지"만 쓰고 "무엇이 약한지"는 쓰지 않는다
 
 ### 새 파일을 만들 때
 - 위 목록에 해당하는 새 종류의 파일이 생기면 `.gitignore`에 추가하고 보고에 적는다.

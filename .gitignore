@@ -11,6 +11,12 @@
 *.pfx
 id_rsa*
 id_ed25519*
+id_ecdsa*
+id_dsa*
+# TOTP 비밀값·QR 산출물 (가입·재설정 때 로컬에 저장한 경우)
+totp-secret*
+totp-qr*
+*.otpauth
 *_ed25519
 *_ed25519.pub
 *deploy_key*
@@ -62,3 +68,4 @@ coverage/
 # Claude Code 개인 설정
 .claude/settings.local.json
 CLAUDE.local.md
+*.local.md

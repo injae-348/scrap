@@ -35,9 +35,8 @@ def test_health_ok_with_existing_db(make_client, tmp_path: Path) -> None:
     assert res.json() == {"status": "ok"}
 
 
-def test_health_does_not_require_secrets(make_client, tmp_path: Path) -> None:
-    # conftest가 SESSION_SECRET, ANTHROPIC_API_KEY를 비운 상태에서도 앱이 뜬다.
-    assert "SESSION_SECRET" not in os.environ
+def test_health_does_not_require_anthropic_key(make_client, tmp_path: Path) -> None:
+    # ANTHROPIC_API_KEY 없이도 앱이 뜬다 (SESSION_SECRET은 필수 — test_config.py).
     assert "ANTHROPIC_API_KEY" not in os.environ
     client = make_client(DB_PATH=str(tmp_path / "test.db"))
     assert client.get("/api/health").status_code == 200

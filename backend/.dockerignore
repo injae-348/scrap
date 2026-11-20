@@ -10,6 +10,11 @@
 **/secrets/
 **/recovery-codes*
 **/*token*.txt
+**/id_*
+# 인증 산출물 (TOTP 비밀값·QR). `*totp*`는 소스(test_auth_totp_reset.py 등)까지 막으므로 쓰지 않는다.
+**/totp-secret*
+**/totp-qr*
+**/*.otpauth
 
 # 데이터·백업·로그
 **/data/

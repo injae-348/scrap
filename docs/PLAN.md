@@ -14,13 +14,14 @@
    - 사용자가 0명일 때만 가입 가능. 가입 후 가입 API 영구 비활성화.
    - TOTP 2차 인증 (QR 등록, 6자리 확인), 복구 코드 10개.
    - 무한 로그인: 서버 세션 테이블 + 만료 없는(또는 슬라이딩 갱신) HttpOnly 쿠키.
-   - 로그아웃, "다른 기기 모두 로그아웃", 로그인된 기기 목록.
+   - 로그아웃, "모든 기기 로그아웃"(현재 기기 포함), 로그인된 기기 목록.
    - 로그인 실패 횟수 제한.
+   - 최초 가입 토큰(`SETUP_TOKEN`): 서버 `.env`에만 두고, 이 값을 아는 사람만 최초 가입 가능. 가입 후 삭제.
 9. **저장 동선**: 링크 복사 → PWA 실행 → "링크 붙여넣기" 버튼(클립보드 읽기) → 저장. (iOS PWA는 공유 시트 미지원)
 
 ## 데이터 모델
 ```
-users          id, username, password_hash, totp_secret, created_at
+users          id, username, password_hash, totp_secret, totp_last_step, created_at
 recovery_codes id, user_id, code_hash, used_at
 sessions       id, user_id, token_hash, user_agent, created_at, last_seen_at
 sources        id, name, domain_patterns, sort_order
@@ -61,20 +62,19 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] CI가 한 번 돈 뒤 ruleset `rule`에 "Require status checks to pass"로 CI 잡 `frontend` 추가 (사용자가 GitHub에서 설정 — PR #2 병합 후)
 
 ### Phase 2. 서버 준비
-> 서버 현황(2026-11-19 사용자 확인): Ubuntu 24.04, OCI E2.1.Micro(x86_64 → 이미지 `linux/amd64`), 스왑 2GB·Docker·80/443 개방·DuckDNS 도메인·기존 Caddy HTTPS가 이미 있음. 절차: `deploy/README.md`
+> 서버 아키텍처는 x86_64 → 이미지 `linux/amd64`. 절차: `deploy/README.md` (서버 고유 기록은 로컬 `deploy/README.local.md`)
 - [x] 서버 아키텍처 확인 (`uname -m` = x86_64)
 - [x] 스왑 2GB, Docker 설치, OCI 보안 목록·iptables 80/443 개방 (기존에 완료)
 - [x] DuckDNS 서브도메인 발급·서버 IP 연결 (기존 도메인 재사용)
 - [x] 서버 현황 확인 결과 공유 (README 1단계)
-- [x] 기존 컨테이너·Caddy 중지 (80/443 비우기) — 기존 앱 데이터 불필요로 백업 생략. 별도 conversation 배포 키는 없었음(사용자 개인 키를 공용) → 서버 키는 유지
+- [x] 기존 컨테이너·Caddy 중지 (80/443 비우기) — 기존 앱 데이터 불필요로 백업 생략
 - [x] DuckDNS IP 자동 갱신 cron (토큰 파일 600)
 - [x] 배포 전용 사용자(`deploy`)와 배포 전용 SSH 키 등록 (아래 "CI/CD 설계" 참고)
 - [x] Docker Compose 구성 (api + web), 앱 디렉터리 `/opt/scrap-app` (서버 폴더 bind mount)
 - [x] 서버의 `.env`는 서버에서 직접 작성 (저장소·CI에 넣지 않음)
 - [x] 첫 확인: 임시 페이지(bootstrap)로 새 web Caddy가 `https://<이름>.duckdns.org` 인증서 발급 — 인증서 디렉터리(`/data`)는 볼륨으로 유지
 - [x] 기존 이미지·컨테이너·볼륨·폴더·crontab 정리 (2026-11-19 완료)
-- [ ] (사용자) `conversation` 저장소 Actions 시크릿에서 SSH 개인키·호스트 삭제 — 개인 키가 저장돼 있을 가능성
-- [ ] (사용자, 권장) 서버 접속용 개인 SSH 키 교체 — 다른 저장소 시크릿에 올라갔던 키이므로
+- [x] 기존 앱의 배포 설정 정리 (2026-11-20 확인)
 
 ### Phase 3. CI/CD 파이프라인
 > 결정 사항 (2026-11-19 사용자 확정, 근거: Phase 2 QA `docs/reviews/qa-2-20261119.md`):
@@ -92,31 +92,44 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] 빈 앱(헬스체크 엔드포인트만)으로 파이프라인 끝까지 한 번 성공시키기 (2026-11-19 PR #5 병합 → 승인 → 배포 성공, 서버·외부 헬스체크 통과, README 12-4 확인 전부 통과. QA: `docs/reviews/qa-3-20261119.md`)
 
 ### Phase 4. 인증
+> 결정 사항 (2026-11-20 사용자 확정): 세션은 180일 미사용 시 만료(쿠키 400일, 접속 시 갱신). 최초 가입은 `SETUP_TOKEN`으로 보호(도메인은 인증서 공개 기록으로 이미 알려져 있음). 프론트 연동은 Phase 6. 서버 수동 점검(`SESSION_SECRET`·`SETUP_TOKEN`)과 최초 가입 절차는 README에 쓰지 않고 마스터가 세션에서 안내한다. 리뷰: `docs/reviews/qa-4-20261120.md` (보안 리뷰는 로컬 전용).
 - [ ] 최초 가입, TOTP 등록, 복구 코드
 - [ ] 로그인(비밀번호 → TOTP), 세션 쿠키, 로그아웃, 전체 로그아웃, 기기 목록
 - [ ] 로그인 실패 제한 (공통 요청 제한 미들웨어로 만들어 인증 없는 `/api/health`에도 적용 검토)
 - [ ] `SESSION_SECRET`이 `.env.example` 자리표시자이거나 너무 짧으면 앱 기동 거부
+- [ ] 최초 가입 토큰(`SETUP_TOKEN`), 운영 설정 가드(운영에서 개발용 설정이면 기동 거부)
 - [ ] security-reviewer 검토 및 조치
 
 ### Phase 5. 스크랩 API
 - [ ] 스크랩 CRUD, 출처 자동 판별, 주제 관리, 좋아요, 마감일
 - [ ] 제목 자동 채움 (og:title, 유튜브 oEmbed; 실패 시 빈칸)
 - [ ] FTS5 trigram 검색
+- [ ] (Phase 4에서 넘김) 착수 조건: 새 라우터는 인증 기본 적용(`get_current_session`) + `/auth/*` 외 모든 `/api/*`가 미인증 시 401인지 전수 테스트
+- [ ] (Phase 4에서 넘김) URL을 가져오는 기능은 http/https 스킴만 허용 (제목 자동 채움)
+- [ ] (Phase 4에서 넘김) 마이그레이션은 추가 위주로 작성 (구 이미지로 롤백 가능하게), 하위 의존성 고정·취약점 검사(pip-audit) 도입
 
 ### Phase 6. 프론트 연동 + PWA
 - [ ] Phase 1 QA에서 넘긴 것: 개발용 섹션·"목 모드" 문구 제거, 401/`/auth/status` 오류 처리, 작성 중 이탈 경고, 사이드바 주제 다중 선택 (`docs/reviews/qa-1-20261119.md`)
 - [ ] 목 데이터를 실제 API로 교체
 - [ ] manifest, 아이콘, 서비스워커 → 아이폰 홈 화면 추가 테스트
 - [ ] 클립보드 붙여넣기 동선 테스트 (iOS Safari)
+- [ ] (Phase 4에서 넘김) 인증 화면 연동: 가입 화면 `setup_token` 입력칸, `error.code`별 화면 처리(401은 `unauthorized`일 때만 로그인 화면), 복구 코드 한 번만 표시, 로그인 입력칸 iOS 속성, 기기 목록 `last_seen_at`, 전체 로그아웃 후 로그인 화면 (`docs/reviews/qa-4-20261120.md` 5절)
+- [ ] (Phase 4에서 넘김) 개발 설정: Vite `/api` 프록시 + `COOKIE_SECURE=0`·`ALLOWED_ORIGINS`, 서비스워커 캐시에서 `/api/*` 제외
+- [ ] (Phase 4에서 넘김) `VITE_` 접두사 변수는 공개 값 전용(번들·공개 이미지에 들어감) 규칙 문서화, CI에서 빌드 결과물에 비밀값 패턴이 없는지 검사
 
 ### Phase 7. AI 기능
 - [ ] AI로 채우기 (본문 추출 → Claude 구조화 출력 → 제안 표시)
 - [ ] AI 검색 (도구 호출 루프, 결과 카드)
+- [ ] (Phase 4에서 넘김) 본문 추출은 http/https 스킴만 허용
 
 ### Phase 8. 운영
 - [ ] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업
 - [ ] 운영 절차 문서화 (`deploy/README.md`: 수동 롤백, 백업 복원, 비밀값 교체)
 - [ ] CI 배포 키 정기 교체 절차, GHCR 옛 이미지 보존 기간 정책
+- [ ] (Phase 4에서 넘김) 외부로 복사하는 백업은 암호화 필수 (DB에 인증 정보 포함), WAL 모드에 맞춘 백업·복원
+- [ ] (Phase 4에서 넘김) 계정 복구 절차 (인증 앱과 복구 코드를 모두 잃은 경우)
+- [ ] (Phase 4에서 넘김) 운영 문서에 비밀값을 화면에 펼치는 진단 명령 금지 목록, 컨테이너 로그 크기 상한, (선택) compose `secrets:`로 비밀값 전달
+- [ ] (Phase 4에서 넘김) infra 규칙: 비밀값을 `--build-arg`·이미지 `ENV`로 넣지 않는다 (공개 이미지 `docker history`로 보임)
 
 ## 도메인 (DuckDNS)
 
