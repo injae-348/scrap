@@ -113,16 +113,17 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 
 ### Phase 6. 프론트 연동 + PWA
 > 결정 사항 (2026-11-21): 목록 응답은 메모 대신 `memo_preview`(앞 300자), 전문은 상세에서만 (`docs/API.md` v1.4). 목 데이터는 삭제하고 실제 API만 쓴다. 서비스워커는 새 버전을 자동 적용하지 않고 "새로고침" 안내로 묻는다(작성 중이면 확인). 리뷰: `docs/reviews/qa-6-20261121.md` (보안 리뷰는 로컬 전용).
-- [ ] Phase 1 QA에서 넘긴 것: 개발용 섹션·"목 모드" 문구 제거, 401/`/auth/status` 오류 처리, 작성 중 이탈 경고, 사이드바 주제 다중 선택 (`docs/reviews/qa-1-20261119.md`)
-- [ ] 목 데이터를 실제 API로 교체
-- [ ] manifest, 아이콘, 서비스워커 → 아이폰 홈 화면 추가 테스트
-- [ ] 클립보드 붙여넣기 동선 테스트 (iOS Safari)
-- [ ] (Phase 4에서 넘김) 인증 화면 연동: 가입 화면 `setup_token` 입력칸, `error.code`별 화면 처리(401은 `unauthorized`일 때만 로그인 화면), 복구 코드 한 번만 표시, 로그인 입력칸 iOS 속성, 기기 목록 `last_seen_at`, 전체 로그아웃 후 로그인 화면 (`docs/reviews/qa-4-20261120.md` 5절)
-- [ ] (Phase 4에서 넘김) 개발 설정: Vite `/api` 프록시 + `COOKIE_SECURE=0`·`ALLOWED_ORIGINS`, 서비스워커 캐시에서 `/api/*` 제외
-- [ ] (Phase 4에서 넘김) `VITE_` 접두사 변수는 공개 값 전용(번들·공개 이미지에 들어감) 규칙 문서화, CI에서 빌드 결과물에 비밀값 패턴이 없는지 검사
-- [ ] (Phase 5에서 넘김, 착수 조건) 메모 마크다운은 원시 HTML을 끄거나 무해화해서 렌더링, 링크는 http/https만 `rel="noopener noreferrer"`, 제목·메모에 `dangerouslySetInnerHTML` 금지 + 렌더링 단위 테스트
-- [ ] (Phase 5에서 넘김) 목 데이터·오류 코드·커서를 서버 기준으로 정리 (`docs/reviews/qa-5-20261120.md`), PATCH에는 바뀐 필드만, 필터가 바뀌면 커서 버리기, 미리보기 로딩은 입력을 막지 않게
-- [ ] (Phase 5에서 넘김, API 결정) 목록 응답의 메모를 앞부분만 줄지 결정 (상세에서 전문)
+- [x] Phase 1 QA에서 넘긴 것: 개발용 섹션·"목 모드" 문구 제거, 401/`/auth/status` 오류 처리, 작성 중 이탈 경고, 사이드바 주제 다중 선택 (`docs/reviews/qa-1-20261119.md`)
+- [x] 목 데이터를 실제 API로 교체
+- [x] manifest, 아이콘, 서비스워커 → 아이폰 홈 화면 추가 테스트 (2026-11-21 실기기 통과)
+- [x] 클립보드 붙여넣기 동선 테스트 (iOS Safari, 2026-11-21 실기기 통과)
+- [x] (Phase 4에서 넘김) 인증 화면 연동: 가입 화면 `setup_token` 입력칸, `error.code`별 화면 처리(401은 `unauthorized`일 때만 로그인 화면), 복구 코드 한 번만 표시, 로그인 입력칸 iOS 속성, 기기 목록 `last_seen_at`, 전체 로그아웃 후 로그인 화면 (`docs/reviews/qa-4-20261120.md` 5절)
+- [x] (Phase 4에서 넘김) 개발 설정: Vite `/api` 프록시 + `COOKIE_SECURE=0`·`ALLOWED_ORIGINS`, 서비스워커 캐시에서 `/api/*` 제외
+- [x] (Phase 4에서 넘김) `VITE_` 접두사 변수는 공개 값 전용(번들·공개 이미지에 들어감) 규칙 문서화, CI에서 빌드 결과물에 비밀값 패턴이 없는지 검사
+- [x] (Phase 5에서 넘김, 착수 조건) 메모 마크다운은 원시 HTML을 끄거나 무해화해서 렌더링, 링크는 http/https만 `rel="noopener noreferrer"`, 제목·메모에 `dangerouslySetInnerHTML` 금지 + 렌더링 단위 테스트
+- [x] (Phase 5에서 넘김) 목 데이터·오류 코드·커서를 서버 기준으로 정리 (`docs/reviews/qa-5-20261120.md`), PATCH에는 바뀐 필드만, 필터가 바뀌면 커서 버리기, 미리보기 로딩은 입력을 막지 않게
+- [x] (Phase 5에서 넘김, API 결정) 목록 응답의 메모를 앞부분만 줄지 결정 (상세에서 전문) → `memo_preview` 300자 (API.md v1.4)
+- [x] 운영 배포 (2026-11-21 PR #11 병합 → 승인 → 배포 성공, 외부 health·PWA 파일 헤더 확인, 최초 가입 완료, 아이폰 홈 화면 앱 확인)
 
 ### Phase 7. AI 기능
 - [ ] AI로 채우기 (본문 추출 → Claude 구조화 출력 → 제안 표시)
