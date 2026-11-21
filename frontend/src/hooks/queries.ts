@@ -80,9 +80,14 @@ export function useAuthStatus() {
     queryFn: async () => {
       const s = await authApi.status()
       // 사용 중 만료된 상태에서 다시 확인해도 여전히 로그아웃이면 만료 표시를 유지한다
-      // (남겨 둔 편집 화면이 일반 로그아웃 처리로 바로 사라지지 않게)
+      // (남겨 둔 편집 화면이 일반 로그아웃 처리로 바로 사라지지 않게).
+      // 로그인 상태였는데 다시 확인해 보니 로그아웃이면(재연결 뒤 세션 만료 등) 401과 같은 만료 경로로 처리한다.
+      // 처음 방문(이전 값 없음)과 직접 로그아웃(useSignedOut이 logged_in:false로 써 둠)은 만료로 보지 않는다.
       const prev = qc.getQueryData<ClientAuthStatus>(keys.authStatus)
-      if (prev?.expired && !s.logged_in && !s.setup_required) return { ...s, expired: true, expiredSeq: prev.expiredSeq }
+      if (!s.logged_in && !s.setup_required) {
+        if (prev?.expired) return { ...s, expired: true, expiredSeq: prev.expiredSeq }
+        if (prev?.logged_in) return { ...s, expired: true, expiredSeq: (prev.expiredSeq ?? 0) + 1 }
+      }
       return s
     },
     staleTime: 60_000,

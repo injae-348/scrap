@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { Navigate, useNavigate } from 'react-router'
+import { useEffect, useRef, useState } from 'react'
+import { Navigate, useNavigate, type Blocker } from 'react-router'
 import { authApi } from '../api'
 import type { TotpSetupInfo } from '../api/types'
 import { errorMessage, isApiError } from '../api/http'
@@ -59,6 +59,7 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
   // 다음 단계에 필요한 결과(QR·비밀값, 복구 코드)만 컴포넌트 상태로 옮긴다.
   const setup = useAuthMutation(authApi.setup)
   const verify = useAuthMutation(authApi.setupVerify)
+  const blockerRef = useRef<Blocker | null>(null)
   const [totpInfo, setTotpInfo] = useState<TotpSetupInfo | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
   const setupWait = useRetryCountdown(setup.error)
@@ -99,6 +100,7 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
       { code: c },
       {
         onSuccess: (res) => {
+          if (blockerRef.current?.state === 'blocked') blockerRef.current.reset()
           setTotpInfo(null)
           setRecoveryCodes(res.recovery_codes)
         },
@@ -118,6 +120,10 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
 
   // QR 단계·복구 코드 단계에서 나가면(새로고침 포함) 진행 중인 가입이나 복구 코드를 잃는다
   const { blocker, allowLeave } = useLeaveGuard(step > 0)
+  // 확인 요청 중에 열린 이탈 확인 창은 요청이 성공하면 닫는다 (복구 코드 화면을 먼저 보여 준다)
+  useEffect(() => {
+    blockerRef.current = blocker
+  }, [blocker])
 
   const finish = async () => {
     allowLeave()

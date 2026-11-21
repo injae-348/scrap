@@ -89,6 +89,9 @@ describe('2차 인증 재설정 확인', () => {
     expect(router.state.location.pathname).toBe('/settings/totp')
     finish()
     expect(await screen.findByText('AAAA-BBBB-CCCC-DDDD')).toBeTruthy()
+    // 성공하면 열려 있던 이탈 확인 창은 닫히고 복구 코드 화면이 먼저 보인다
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(router.state.location.pathname).toBe('/settings/totp')
   })
 })
 
@@ -112,5 +115,33 @@ describe('가입 코드 확인', () => {
     fireEvent.change(code, { target: { value: '222222' } })
     await waitFor(() => expect((screen.getByRole('button', { name: '확인' }) as HTMLButtonElement).disabled).toBe(true))
     expect(verifyCalls()).toBe(1)
+  })
+})
+
+describe('가입 코드 확인 중 이탈', () => {
+  it('확인 중 열린 이탈 확인 창은 성공하면 닫히고 복구 코드를 보여 준다', async () => {
+    let finish: () => void = () => {}
+    stubApi((p) => {
+      if (p === '/auth/status') return { status: 200, body: { setup_required: true, logged_in: false } }
+      if (p === '/auth/setup') return { status: 200, body: info }
+      return new Promise<Reply>((resolve) => {
+        finish = () => resolve({ status: 200, body: { recovery_codes: ['EEEE-FFFF-GGGG-HHHH'] } })
+      })
+    })
+    const router = renderAt('/setup')
+    fireEvent.change(await screen.findByLabelText('아이디'), { target: { value: 'tester' } })
+    fireEvent.change(screen.getByLabelText('비밀번호'), { target: { value: 'long enough pw' } })
+    fireEvent.change(screen.getByLabelText('비밀번호 확인'), { target: { value: 'long enough pw' } })
+    fireEvent.change(screen.getByLabelText('가입 토큰'), { target: { value: 'tok' } })
+    fireEvent.click(screen.getByRole('button', { name: '다음' }))
+    fireEvent.change(await screen.findByLabelText('6자리 코드'), { target: { value: '123456' } })
+    // 앱 안 이동 시도 (뒤로 가기 등)
+    void router.navigate('/settings')
+    expect(await screen.findByText('코드를 확인하는 중이에요')).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '나가기' })).toBeNull()
+    finish()
+    expect(await screen.findByText('EEEE-FFFF-GGGG-HHHH')).toBeTruthy()
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(router.state.location.pathname).toBe('/setup')
   })
 })

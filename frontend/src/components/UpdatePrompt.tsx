@@ -13,6 +13,7 @@ type Controller = ReturnType<typeof createUpdateController>
 
 // StrictMode에서 effect가 두 번 돌아도 한 번만 등록한다
 let controller: Controller | null = null
+let registration: ServiceWorkerRegistration | null = null
 let setViewGlobal: ((v: UpdateView) => void) | null = null
 
 export function UpdatePrompt() {
@@ -22,16 +23,22 @@ export function UpdatePrompt() {
     setViewGlobal = setView
     if (!controller) {
       const c = createUpdateController(
-        { hasActiveGuard: hasActiveLeaveGuard, bypassGuards: bypassAllLeaveGuards, reload: () => window.location.reload() },
+        {
+          hasActiveGuard: hasActiveLeaveGuard,
+          bypassGuards: bypassAllLeaveGuards,
+          reload: () => window.location.reload(),
+          getRegistration: () => registration,
+        },
         (v) => setViewGlobal?.(v),
       )
       controller = c
       const updateSW = registerSW({
         onNeedRefresh: () => c.onNeedRefresh(),
         onNeedReload: () => c.onNeedReload(),
-        onRegisteredSW(_url, registration) {
+        onRegisteredSW(_url, reg) {
+          registration = reg ?? null
           // 오래 켜 둔 홈 화면 앱도 새 버전을 알 수 있게 1시간마다 확인한다
-          if (registration) setInterval(() => void registration.update(), 60 * 60 * 1000)
+          if (reg) setInterval(() => void reg.update(), 60 * 60 * 1000)
         },
       })
       c.setApplyUpdate(() => updateSW(false))

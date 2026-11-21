@@ -134,6 +134,48 @@ describe('만료 표시 유지', () => {
   })
 })
 
+describe('로그인 → 로그아웃 전환', () => {
+  it('상태를 다시 확인해 처음으로 logged_in:false를 받아도 만료로 보고 편집 화면을 남긴다', async () => {
+    let loggedIn = true
+    stubApi((_m, p) => {
+      if (p === '/auth/status') return { status: 200, body: { setup_required: false, logged_in: loggedIn } }
+      return { status: 200, body: [] }
+    })
+    const qc = createQueryClient()
+    const r = renderAt('/scraps/new', qc)
+    expect(await screen.findByLabelText('메모')).toBeTruthy()
+    loggedIn = false
+    await qc.invalidateQueries({ queryKey: keys.authStatus })
+    await waitFor(() => expect(qc.getQueryData(keys.authStatus)).toMatchObject({ logged_in: false, expired: true }))
+    // 작성 중이라 이탈 확인 → 머무르기
+    fireEvent.click(await screen.findByRole('button', { name: '계속 작성' }))
+    expect(r.state.location.pathname).toBe('/scraps/new')
+    expect((screen.getByLabelText('메모') as HTMLTextAreaElement).value).toBe('작성 중인 메모')
+    expect(screen.getByText(/로그인이 만료됐어요. 작성 중인 내용을 복사해 둔 뒤/)).toBeTruthy()
+  })
+
+  it('처음부터 로그아웃 상태로 방문하면 만료 표시 없이 바로 로그인 화면', async () => {
+    stubApi(() => ({ status: 200, body: { setup_required: false, logged_in: false } }))
+    const qc = createQueryClient()
+    const r = renderAt('/', qc)
+    await waitFor(() => expect(r.state.location.pathname).toBe('/login'))
+    expect(qc.getQueryData(keys.authStatus)).toEqual({ setup_required: false, logged_in: false })
+  })
+
+  it('직접 로그아웃한 뒤 다시 확인해도 만료로 보지 않는다', async () => {
+    stubApi(() => ({ status: 200, body: { setup_required: false, logged_in: false } }))
+    const qc = createQueryClient()
+    qc.setQueryData(keys.authStatus, { setup_required: false, logged_in: true })
+    const { result } = renderHook(() => useSignedOut(), {
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    })
+    await act(() => result.current())
+    renderAt('/login', qc)
+    await qc.invalidateQueries({ queryKey: keys.authStatus })
+    await waitFor(() => expect(qc.getQueryData(keys.authStatus)).toEqual({ setup_required: false, logged_in: false }))
+  })
+})
+
 describe('로그아웃 처리', () => {
   it('진행 중이던 상태 확인 응답이 늦게 와도 로그아웃 상태를 덮어쓰지 않는다', async () => {
     const qc = createQueryClient()

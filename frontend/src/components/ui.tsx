@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { cx } from '../lib/styles'
 import { IconAlert, IconInbox } from './Icons'
 
@@ -244,11 +245,21 @@ function LeaveDialogBody({
   // 열려 있는 동안 포커스를 대화상자 안에 두고, 닫히면 열기 전 위치로 돌려준다
   // (autoFocus가 포커스를 옮기기 전에 기억해야 하므로 처음 렌더 때 읽는다)
   const [prevFocus] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null))
+  const overlayRef = useRef<HTMLDivElement>(null)
+  // 열린 동안 창 밖(body의 다른 자식: 앱 루트 등)을 inert로 만들어 포커스·클릭·Esc가 배경으로 가지 않게 한다.
+  // 원래 inert가 아니던 것만 바꾸고 닫힐 때 되돌린 뒤 포커스를 돌려준다.
   useEffect(() => {
-    const node = ref.current
+    const overlay = overlayRef.current
+    const changed: Element[] = []
+    for (const el of Array.from(document.body.children)) {
+      if (!overlay || el === overlay || el.contains(overlay) || el.hasAttribute('inert')) continue
+      el.setAttribute('inert', '')
+      changed.push(el)
+    }
     return () => {
-      // 실제로 닫혀 화면에서 빠졌을 때만 돌려준다 (개발 모드의 effect 재실행에서는 그대로 둔다)
-      if (!node?.isConnected && prevFocus?.isConnected) prevFocus.focus()
+      for (const el of changed) el.removeAttribute('inert')
+      // 실제로 닫혀 화면에서 빠졌을 때만 포커스를 돌려준다 (개발 모드의 effect 재실행에서는 그대로 둔다)
+      if (!overlay?.isConnected && prevFocus?.isConnected) prevFocus.focus()
     }
   }, [prevFocus])
 
@@ -273,8 +284,12 @@ function LeaveDialogBody({
     }
   }
 
-  return (
-    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 px-safe-4 pb-safe sm:items-center">
+  // 앱 루트 밖(body 바로 아래)에 그려야 앱 루트를 inert로 만들 수 있다
+  return createPortal(
+    <div
+      ref={overlayRef}
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 px-safe-4 pb-safe sm:items-center"
+    >
       <div
         ref={ref}
         role="alertdialog"
@@ -303,6 +318,7 @@ function LeaveDialogBody({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }

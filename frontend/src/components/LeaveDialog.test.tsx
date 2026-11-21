@@ -43,4 +43,22 @@ describe('LeaveDialog 포커스', () => {
     render(<LeaveDialog open onStay={() => {}} />)
     expect(screen.queryByRole('button', { name: '나가기' })).toBeNull()
   })
+
+  it('열린 동안 배경(앱 루트)은 inert, 닫으면 원래대로', () => {
+    const { container } = render(<Harness />)
+    // 원래부터 inert인 다른 요소는 닫은 뒤에도 그대로 둔다
+    const other = document.createElement('div')
+    other.setAttribute('inert', '')
+    document.body.appendChild(other)
+    fireEvent.click(screen.getByRole('button', { name: '열기' }))
+    const dialog = screen.getByRole('alertdialog')
+    expect(container.hasAttribute('inert')).toBe(true)
+    expect(screen.getByRole('button', { name: '배경 버튼', hidden: true }).closest('[inert]')).toBe(container)
+    expect(dialog.closest('[inert]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '계속 작성' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(container.hasAttribute('inert')).toBe(false)
+    expect(other.hasAttribute('inert')).toBe(true)
+    other.remove()
+  })
 })

@@ -1,6 +1,6 @@
 import { useQueryClient } from '@tanstack/react-query'
-import { useEffect, useState } from 'react'
-import { Link, useNavigate } from 'react-router'
+import { useEffect, useRef, useState } from 'react'
+import { Link, useNavigate, type Blocker } from 'react-router'
 import { authApi } from '../api'
 import type { TotpSetupInfo } from '../api/types'
 import { isApiError } from '../api/http'
@@ -26,12 +26,17 @@ export function TotpResetPage() {
   // 다음 단계에 필요한 결과만 컴포넌트 상태로 옮긴다.
   const start = useAuthMutation(authApi.totpReset)
   const verify = useAuthMutation(authApi.totpResetVerify)
+  const blockerRef = useRef<Blocker | null>(null)
   const [totpInfo, setTotpInfo] = useState<TotpSetupInfo | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
   const startWait = useRetryCountdown(start.error)
   const verifyWait = useRetryCountdown(verify.error)
   const step = recoveryCodes ? 2 : totpInfo ? 1 : 0
   const { blocker, allowLeave } = useLeaveGuard(step > 0)
+  // 확인 요청 중에 열린 이탈 확인 창은 요청이 성공하면 닫는다 (복구 코드 화면을 먼저 보여 준다)
+  useEffect(() => {
+    blockerRef.current = blocker
+  }, [blocker])
 
   // 페이지를 떠나면(뒤로·앞으로 캐시에 들어갈 때 포함) 화면에 들고 있던 비밀값·복구 코드를 지운다
   useEffect(() => {
@@ -68,6 +73,7 @@ export function TotpResetPage() {
       { code: c },
       {
         onSuccess: (res) => {
+          if (blockerRef.current?.state === 'blocked') blockerRef.current.reset()
           setTotpInfo(null)
           setRecoveryCodes(res.recovery_codes)
           // 다른 기기는 서버에서 모두 로그아웃됐다
