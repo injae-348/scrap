@@ -36,6 +36,7 @@ from app.db import Database, DatabaseUnavailableError, check_database
 from app.errors import ApiError, error_response, register_error_handlers
 from app.guard import RequestGuardMiddleware
 from app.headers import NoStoreMiddleware
+from app.logfilters import install_log_filters
 from app.memstore import TTLStore
 from app.meta import PREVIEW_REQUESTS_PER_MINUTE
 from app.meta import router as meta_router
@@ -132,6 +133,8 @@ def _log_setup_token_state(app: FastAPI) -> None:
 
 
 def create_app(settings: Settings | None = None, clock: Clock | None = None) -> FastAPI:
+    # 접근 로그에서 쿼리 문자열(검색어·커서)을 뺀다. 기동 방식과 상관없이 앱을 만들 때 건다.
+    install_log_filters()
     settings = settings or load_settings()
     clock = clock or Clock()
     docs = settings.enable_api_docs
@@ -172,7 +175,11 @@ def create_app(settings: Settings | None = None, clock: Clock | None = None) -> 
         fallbacks=settings.anthropic_fallbacks,
     )
     app.state.ai_limiter = AiRequestLimiter(
-        clock, app.state.db.connect, settings.ai_per_minute, settings.ai_per_day
+        clock,
+        app.state.db.connect,
+        settings.ai_per_minute,
+        settings.ai_per_day,
+        tokens_per_day=settings.ai_tokens_per_day,
     )
     if not settings.ai_available:
         logger.warning(

@@ -91,7 +91,7 @@ describe('hastText', () => {
   })
 })
 
-describe('P7-4 위장 글자', () => {
+describe('위장 글자', () => {
   it('방향 서식 문자를 지운 뒤 판정한다', () => {
     expect(hostsInLinkText('\u202Ehttps://bank.example.com')).toEqual(['bank.example.com'])
     expect(linkHostInfo('https://evil.example', '\u2066https://bank.example.com\u2069')!.mismatch).toBe(true)

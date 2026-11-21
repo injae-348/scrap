@@ -1,18 +1,34 @@
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
+import type { Plugin } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import { defineConfig } from 'vitest/config'
+import { BUILD_ID_ENV, BUILD_ID_META, resolveBuildId } from './src/lib/buildId.ts'
 
 // ⚠️ VITE_ 로 시작하는 환경변수는 빌드 결과물(브라우저 번들, 공개 이미지)에 그대로 들어간다.
 //    공개해도 되는 값만 쓴다. 비밀값(API 키, 세션 비밀값, 가입 토큰)은 절대 VITE_ 로 넘기지 않는다.
-//    지금은 VITE_ 변수를 쓰지 않는다.
+//    쓰는 VITE_ 변수는 VITE_APP_BUILD_ID(빌드 식별자, 커밋 SHA 같은 공개 값) 하나뿐이다.
+//    허용 목록은 src/envAllowlist.test.ts 가 검사한다 (이 파일의 process.env 읽기 포함. 새 이름은 거기에 이유와 함께 추가).
 
 const isTest = !!process.env.VITEST
+
+// 빌드 식별자를 index.html <head>에 meta로 넣는다 (src/lib/buildId.ts 설명 참고).
+// 배포마다 값이 바뀌면 index.html 내용 → sw.js 미리 캐시 revision → sw.js 가 바뀌어 "새 버전" 안내가 뜬다.
+// 빌드 뒤 scripts/check-build-id.mjs 가 dist 에서 이 연결을 확인한다 (npm run build 에 포함).
+const buildId = resolveBuildId(process.env[BUILD_ID_ENV])
+
+function buildIdPlugin(): Plugin {
+  return {
+    name: 'app-build-id',
+    transformIndexHtml: () => [{ tag: 'meta', attrs: { name: BUILD_ID_META, content: buildId }, injectTo: 'head' }],
+  }
+}
 
 export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
+    buildIdPlugin(),
     !isTest &&
       VitePWA({
         // 새 버전은 자동으로 적용하지 않고 "새로고침" 안내를 띄운다 (작성 중인 내용 보호).

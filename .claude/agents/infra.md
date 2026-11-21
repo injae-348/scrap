@@ -9,6 +9,7 @@ model: inherit
 
 ## 범위
 - **공개 저장소다.** `CLAUDE.md`의 "공개 저장소 규칙"을 지킨다. 비밀값·실제 도메인/IP·개인정보를 파일에 넣지 않고, 새로 생기는 비밀 파일 종류는 `.gitignore`에 추가하고 보고한다.
+- **비밀값은 이미지에 넣지 않는다.** `--build-arg`·Dockerfile `ENV`·`ARG`로 비밀값을 넘기지 않는다 (공개 이미지의 `docker history`로 누구나 볼 수 있다). 빌드 인자는 커밋 SHA 같은 공개값만 쓰고, 앱 비밀값은 서버 `.env`로 실행 시에만 전달한다.
 - `.dockerignore`로 `.env`, DB, 로그, `.git`이 이미지에 들어가지 않게 한다 (GHCR 이미지도 공개될 수 있다).
 - 워크플로에 `pull_request_target`을 쓰지 않는다. 시크릿은 `production` Environment에만 둔다.
 - `deploy/`, `.github/workflows/`, `docker-compose.yml`, `backend/Dockerfile`, `.env.example`만 만들고 수정한다.

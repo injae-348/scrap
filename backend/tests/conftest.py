@@ -26,6 +26,9 @@ _ENV_NAMES = (
     "ALLOWED_ORIGINS",
     "COOKIE_SECURE",
     "SETUP_TOKEN",
+    "AI_PER_MINUTE",
+    "AI_PER_DAY",
+    "AI_TOKENS_PER_DAY",
 )
 
 

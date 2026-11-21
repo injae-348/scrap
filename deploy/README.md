@@ -15,6 +15,7 @@ AI(마스터·서브에이전트)는 서버에 접속하지 않는다. "결과�
 - ⚠️ 표시 단계는 **되돌리기 어렵다.** 바로 앞의 백업·확인을 끝낸 뒤 진행한다.
 - 이 문서는 공개 저장소에 있다. **공인 IP, 실제 도메인, 토큰, 이메일, 서버 고유 상태·이력**을 이 문서나 저장소 파일에 적지 않는다 (필요하면 로컬 문서에 적는다).
 - 비밀값(토큰·키)은 `echo 토큰 > 파일`처럼 명령줄에 쓰지 않는다 (셸 기록에 남는다). 이 문서의 방법(붙여넣기 후 Ctrl+D, 편집기)을 쓴다.
+- 진단할 때 비밀값을 화면에 펼치는 명령(`docker inspect` 전체 출력, `docker compose config`, 컨테이너 `env` 등)은 쓰지 않는다. 목록과 대신 쓰는 방법은 17절.
 
 ### 확인 명령(✅/❌) 쓰는 법
 
@@ -32,10 +33,19 @@ chk() { local m=$1; shift; if "$@" >/dev/null 2>&1; then echo "✅ $m"; else ech
 | 평소 배포 (PR 병합 → 승인) | 12 "평소 배포" |
 | 서버 파일(compose, `deploy.sh` 등)이 바뀐 PR을 병합했을 때 — **승인 전에** | 11 |
 | 배포 후 앱이 이상하다 / 사이트가 내려갔다 | 12-6 (수동 롤백·복구) |
-| 배포 후 상태 점검 | 12-4 |
+| 배포 후 상태 점검 | 12-4, 메모리는 12-7 |
+| 매일 백업이 되고 있는지 (서버 / Mac) | 13-5 / 14-7 |
+| DB를 백업으로 되돌리기, 정기 복원 연습 | 15 |
+| 비밀값(세션 비밀값·API 키·SSH 키·age 키·DuckDNS 토큰) 교체, CI 키 정기 교체 | 16 |
+| 서버 침해가 의심될 때 | 16-8 |
+| 진단할 때 쓰면 안 되는 명령 | 17 |
+| AI 모델·한도 바꾸기, AI 사용량 보기 | 18 |
+| 인증 앱과 복구 코드를 모두 잃음 / 비밀번호를 잊음 / 검색 결과가 이상함 | 19 |
+| 아이폰 홈 화면 앱·PC 브라우저가 새 버전으로 안 바뀜 | 20 |
+| GHCR 옛 이미지 정리, 의존성 정기 검사(Dependency audit)가 실패함 | 21 |
 | HTTPS 인증서 문제, 외부에서 접속이 안 됨 | 10 |
 | DuckDNS IP 갱신 확인 | 4-4 |
-| 서버를 처음부터 다시 만들 때 | 1 → 2 → 3 → 4 → 5 → 6 → 12-0 → 12-1 → 12-2 → 12-3 → 12-4 (아래 "서버를 새로 만들 때") |
+| 서버를 처음부터 다시 만들 때 | 1 → 2 → 3 → 4 → 5 → 6 → 12-0 → 12-1 → 12-2 → 12-3 → 12-4 → 13 → 14 (아래 "서버를 새로 만들 때") |
 
 ### 서버를 새로 만들 때
 
@@ -44,7 +54,8 @@ chk() { local m=$1; shift; if "$@" >/dev/null 2>&1; then echo "✅ $m"; else ech
 3. 12-0으로 서버 요구 사항을 확인한다.
 4. 새 서버는 호스트 키가 다르므로 12-1 (b)의 `DEPLOY_KNOWN_HOSTS`를 다시 만들어 넣는다 (CI 키를 새로 만들었으면 `DEPLOY_SSH_KEY`도). 12-2 (c)로 접속을 시험한다.
 5. 첫 배포: Actions → Deploy → **가장 최근 성공 실행** → `deploy` 잡 **Re-run this job** → 승인 (새 커밋이 없어도 배포할 수 있다. GitHub은 30일이 지난 실행은 다시 실행하지 못하므로, 그때는 작은 PR을 병합해 새 배포를 만든다). `state/current`가 없으므로 DB 백업 없이 첫 배포로 진행되고, web 컨테이너가 인증서를 새로 받는다.
-6. 12-4로 확인한다. 이전 서버의 DB를 옮길 때는 첫 배포 전에 `data/scrap.db`(소유 10001, 600)로 넣는다.
+6. 12-4로 확인한다. 이전 서버의 DB를 옮길 때는 첫 배포 전에 `data/scrap.db`(소유 10001, 600)로 넣는다 (Mac의 암호화 백업에서 옮기는 방법은 15-3).
+7. 13절(일일 백업: age 설치·수신자 파일·cron)을 하고, 14-2(백업 수신 키 등록)를 다시 한다. 서버 호스트 키가 바뀌었으므로 Mac의 14-3(호스트 키 파일)도 다시 만든다.
 
 ---
 
@@ -153,6 +164,9 @@ sudo install -d -m 700 -o root   -g root   /opt/scrap-app/caddy/data /opt/scrap-
 # 백업·로그·배포 상태·DuckDNS 토큰: deploy 사용자(배포 스크립트·cron)가 쓴다
 sudo install -d -m 750 -o deploy -g deploy /opt/scrap-app/backups /opt/scrap-app/logs /opt/scrap-app/state
 sudo install -d -m 700 -o deploy -g deploy /opt/scrap-app/duckdns
+# 일일 암호화 백업(13절): 백업 폴더는 deploy 전용, age 수신자(공개키) 폴더는 root 소유 (deploy 가 바꿀 수 없음)
+sudo install -d -m 700 -o deploy -g deploy /opt/scrap-app/backups/daily
+sudo install -d -m 755 -o root   -g root   /opt/scrap-app/age
 
 sudo ls -la /opt/scrap-app /opt/scrap-app/caddy
 ```
@@ -168,13 +182,17 @@ sudo ls -la /opt/scrap-app /opt/scrap-app/caddy
 ├── deploy/                     root     755   스크립트 (deploy가 고칠 수 없음)
 │   ├── duckdns-update.sh                755
 │   ├── deploy.sh                        755   배포 스크립트 (CI 키의 강제 명령, 11절로 설치)
-│   └── rollback.sh                      755   수동 롤백·DB 복원 (사람이 sudo로, 12-6)
+│   ├── rollback.sh                      755   수동 롤백·DB 복원 (사람이 sudo로, 12-6)
+│   ├── backup.sh                        755   일일 암호화 백업 (deploy 의 cron, 13절)
+│   └── backup-send.sh                   755   암호화 백업 내보내기 (백업 수신 키의 강제 명령, 14절)
 ├── data/                       APP_UID  700   SQLite → api 컨테이너 /data
 ├── caddy/                      root     755
 │   ├── data/                   root     700   인증서·ACME 계정 → web 컨테이너 /data  (절대 지우지 않음)
 │   └── config/                 root     700   Caddy 자동 설정 → web 컨테이너 /config
-├── backups/                    deploy   750   predeploy-*.db (600, 배포 직전 자동 백업, 최근 14개) · Phase 8 정기 백업
-├── logs/                       deploy   750   duckdns.log, deploy.log
+├── backups/                    deploy   750   predeploy-*.db (600, 배포 직전 자동 백업 — 평문, 최근 14개)
+│   └── daily/                  deploy   700   daily-*.db.gz.age (600, 일일 백업 — age 암호화, 최근 14개, 13절)
+├── age/                        root     755   recipients.txt (644, age 공개키 — 개인키는 서버에 두지 않는다, 13-2)
+├── logs/                       deploy   750   duckdns.log, deploy.log, backup.log
 ├── state/                      deploy   750   current, previous (운영 중·직전 커밋 SHA), deploy.lock — deploy.sh만 쓴다
 ├── duckdns/                    deploy   700   token(600), domain
 └── src/                        root           저장소 사본 (파일 설치용, 11절)
@@ -200,6 +218,8 @@ sudo install -m 644 -o root -g root /opt/scrap-app/src/docker-compose.yml       
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/deploy.sh         /opt/scrap-app/deploy/deploy.sh
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/rollback.sh       /opt/scrap-app/deploy/rollback.sh
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/duckdns-update.sh /opt/scrap-app/deploy/duckdns-update.sh
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/backup.sh         /opt/scrap-app/deploy/backup.sh
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/backup-send.sh    /opt/scrap-app/deploy/backup-send.sh
 sudo install -m 644 -o root -g root /opt/scrap-app/src/deploy/logrotate.conf    /etc/logrotate.d/scrap-app
 
 sudo ls -la /opt/scrap-app /opt/scrap-app/deploy
@@ -291,6 +311,8 @@ cat ~/.ssh/scrap_ci_deploy.pub
 
 **무엇을:** 이 키로 접속하면 **`deploy.sh`만 실행**되고 셸·포워딩·pty가 모두 막히게 등록한다 (`restrict` = 모든 포워딩·pty·X11·`~/.ssh/rc`를 한 번에 끄는 옵션).
 
+> ⚠️ 아래 `tee`는 `authorized_keys`를 **새로 쓴다** (있던 줄이 모두 사라진다). 서버를 새로 만들어 처음 등록할 때만 쓴다. 백업 수신 키(14-2) 줄이 생긴 뒤 CI 키를 바꿀 때는 16-3(줄 추가 → 시험 → 옛 줄만 삭제)을 쓴다.
+
 ```bash
 PUBKEY='ssh-ed25519 AAAA...여기에 5-1의 .pub 한 줄 전체... scrap-ci-deploy'
 
@@ -306,7 +328,7 @@ sudo cat /home/deploy/.ssh/authorized_keys
 
 **확인:** `256 SHA256:... scrap-ci-deploy (ED25519)`가 나오고, 파일 줄이 `restrict,command="/opt/scrap-app/deploy/deploy.sh" ssh-ed25519 ...`로 시작한다.
 
-CI 키를 교체할 때: 5-1로 새 키 → 5-2로 덮어쓰기(`tee`는 파일을 새로 쓰므로 옛 키는 사라진다) → 12-1 (b)의 `DEPLOY_SSH_KEY` 갱신 → 12-2 (c)로 확인.
+CI 키를 교체할 때는 16-3을 따른다 (백업 수신 키 줄을 지우지 않도록 줄 단위로 추가·삭제한다).
 
 ### 5-3. SSH 비밀번호 로그인이 꺼져 있는지 확인
 
@@ -370,8 +392,10 @@ nano 저장: Ctrl+O → Enter, 종료: Ctrl+X.
 **확인:**
 
 ```bash
-sudo ls -l /opt/scrap-app/.env                       # -rw------- 1 deploy deploy
-sudo grep -E '^SITE_DOMAIN=' /opt/scrap-app/.env     # SITE_DOMAIN=<이름>.duckdns.org
+E=/opt/scrap-app/.env
+chk ".env deploy 600"                           test "$(sudo stat -c '%U %a' $E)" = "deploy 600"
+chk "SITE_DOMAIN 한 줄, 소문자 도메인 형식"        sh -c "sudo grep -E '^SITE_DOMAIN=' $E | grep -qxE 'SITE_DOMAIN=([a-z0-9-]+\.)+[a-z]{2,}' && [ \$(sudo grep -c '^SITE_DOMAIN=' $E) = 1 ]"
+chk "SESSION_SECRET 자리표시자 아님, 32자 이상"   sh -c "sudo grep -E '^SESSION_SECRET=' $E | grep -v 'change-me' | grep -qE '^SESSION_SECRET=.{32,}$'"
 ```
 
 ---
@@ -451,7 +475,11 @@ sudo docker compose -f /opt/scrap-app/docker-compose.yml logs -f web
 | `deploy/deploy.sh` | `/opt/scrap-app/deploy/deploy.sh` | root 755 |
 | `deploy/rollback.sh` | `/opt/scrap-app/deploy/rollback.sh` | root 755 |
 | `deploy/duckdns-update.sh` | `/opt/scrap-app/deploy/duckdns-update.sh` | root 755 |
+| `deploy/backup.sh` | `/opt/scrap-app/deploy/backup.sh` | root 755 |
+| `deploy/backup-send.sh` | `/opt/scrap-app/deploy/backup-send.sh` | root 755 |
 | `deploy/logrotate.conf` | `/etc/logrotate.d/scrap-app` | root 644 |
+
+(`deploy/scan-dist.sh`와 `deploy/mac/`은 서버에 설치하지 않는다 — 각각 CI와 사용자 Mac에서 쓴다.)
 
 **규칙**
 
@@ -468,6 +496,8 @@ sudo install -m 644 -o root -g root /opt/scrap-app/src/docker-compose.yml       
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/deploy.sh         /opt/scrap-app/deploy/deploy.sh
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/rollback.sh       /opt/scrap-app/deploy/rollback.sh
 sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/duckdns-update.sh /opt/scrap-app/deploy/duckdns-update.sh
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/backup.sh         /opt/scrap-app/deploy/backup.sh
+sudo install -m 755 -o root -g root /opt/scrap-app/src/deploy/backup-send.sh    /opt/scrap-app/deploy/backup-send.sh
 sudo install -m 644 -o root -g root /opt/scrap-app/src/deploy/logrotate.conf    /etc/logrotate.d/scrap-app
 # 배포 상태 폴더 (이미 있으면 그대로)
 sudo install -d -m 750 -o deploy -g deploy /opt/scrap-app/state
@@ -483,18 +513,26 @@ chk "compose 설치본 = 저장소"             sudo cmp -s $S/docker-compose.ym
 chk "deploy.sh 설치본 = 저장소"           sudo cmp -s $S/deploy/deploy.sh $A/deploy/deploy.sh
 chk "rollback.sh 설치본 = 저장소"         sudo cmp -s $S/deploy/rollback.sh $A/deploy/rollback.sh
 chk "duckdns-update.sh 설치본 = 저장소"   sudo cmp -s $S/deploy/duckdns-update.sh $A/deploy/duckdns-update.sh
+chk "backup.sh 설치본 = 저장소"           sudo cmp -s $S/deploy/backup.sh $A/deploy/backup.sh
+chk "backup-send.sh 설치본 = 저장소"      sudo cmp -s $S/deploy/backup-send.sh $A/deploy/backup-send.sh
 chk "logrotate 설치본 = 저장소"           sudo cmp -s $S/deploy/logrotate.conf /etc/logrotate.d/scrap-app
 chk "compose root 644"                   test "$(sudo stat -c '%U %a' $A/docker-compose.yml)" = "root 644"
 chk "deploy.sh root 755"                 test "$(sudo stat -c '%U %a' $A/deploy/deploy.sh)" = "root 755"
 chk "rollback.sh root 755"               test "$(sudo stat -c '%U %a' $A/deploy/rollback.sh)" = "root 755"
+chk "backup.sh root 755"                 test "$(sudo stat -c '%U %a' $A/deploy/backup.sh)" = "root 755"
+chk "backup-send.sh root 755"            test "$(sudo stat -c '%U %a' $A/deploy/backup-send.sh)" = "root 755"
 chk "state/ deploy 750"                  test "$(sudo stat -c '%U %a' $A/state)" = "deploy 750"
 chk "deploy.sh 문법"                      bash -n $A/deploy/deploy.sh
 chk "rollback.sh 문법"                    bash -n $A/deploy/rollback.sh
+chk "backup.sh 문법"                      bash -n $A/deploy/backup.sh
+chk "backup-send.sh 문법"                 bash -n $A/deploy/backup-send.sh
 chk "compose 구성 유효 (deploy 권한으로)"  sudo -u deploy -H docker compose -f $A/docker-compose.yml config -q
 chk "logrotate 설정 유효"                 sudo logrotate -d /etc/logrotate.d/scrap-app
 ```
 
 ❌가 있으면 그 줄을 마스터에게 알린다. (`compose 구성 유효`는 `.env`를 읽지만 값은 출력하지 않는다.)
+
+compose 파일이 바뀐 PR이면 승인·배포가 끝난 뒤 12-4와 12-7로 확인한다 (컨테이너가 새 설정으로 다시 만들어진다).
 
 ---
 
@@ -657,6 +695,9 @@ chk "배포 로그에 성공 기록"                  sh -c "sudo tail -n 40 $A/
 chk "배포 로그에 실제 도메인 없음"            sh -c "! sudo grep -qF -- '$D' $A/logs/deploy.log"
 chk "deploy.log 권한 (다른 사용자 읽기 불가)"  sh -c "sudo stat -c %a $A/logs/deploy.log | grep -qE '^6[04]0$'"
 for c in scrap-app-api-1 scrap-app-web-1; do
+  chk "$c 로그 상한 적용 (json-file 10m×3)" sh -c "sudo docker inspect -f '{{.HostConfig.LogConfig.Type}} {{index .HostConfig.LogConfig.Config \"max-size\"}} {{index .HostConfig.LogConfig.Config \"max-file\"}}' $c | grep -qx 'json-file 10m 3'"
+done
+for c in scrap-app-api-1 scrap-app-web-1; do
   chk "$c 메모리 한도의 80% 미만"            sh -c "sudo docker stats --no-stream --format '{{.MemPerc}}' $c | awk '{exit !(\$1+0 < 80)}'"
 done
 chk "서버 여유 메모리(available) 150MB 이상" sh -c "free -m | awk '/^Mem:/{exit !(\$7 >= 150)}'"
@@ -674,6 +715,8 @@ chk "SPA 경로 새로고침도 200"              curl -fs -o /dev/null "https:/
 chk "http → https 리다이렉트"             sh -c "curl -s -o /dev/null -w '%{http_code}' http://$H/ | grep -qE '^30[18]$'"
 chk "보안 헤더(CSP) 있음"                  sh -c "curl -sI https://$H/ | grep -qi '^content-security-policy:'"
 chk "Server 헤더 숨김"                    sh -c "! curl -sI https://$H/api/health | grep -qi '^server:'"
+chk "COOP 헤더 same-origin"               sh -c "curl -sI https://$H/ | grep -qi '^cross-origin-opener-policy: same-origin'"
+chk "CORP 헤더 same-origin"               sh -c "curl -sI https://$H/ | grep -qi '^cross-origin-resource-policy: same-origin'"
 ```
 
 ### 12-5. 필수 검사 설정 (GitHub)
@@ -694,7 +737,7 @@ chk "필수 검사에 frontend·backend" sh -c "gh api repos/$R/rulesets/$id --j
 평소 배포·롤백은 CI가 한다. 자동 롤백: 헬스체크가 실패하면 `deploy.sh`가 배포 직전 운영 버전(`state/current`)으로 되돌리고 실패로 끝난다 (상태 파일은 그대로).
 아래는 **헬스체크는 통과했지만 앱이 잘못 동작할 때**, **자동 롤백까지 실패했을 때**, **`deploy.sh`가 "state 기록 실패"로 끝났을 때**만 쓴다.
 
-**방법 A (권장, GitHub이 될 때)** — Actions → Deploy → **되돌릴 버전의 예전 성공 실행** → `deploy` 잡의 **Re-run this job** → 승인. 같은 `deploy.sh` 경로(백업·헬스체크·상태 기록)를 그대로 탄다. GHCR의 옛 이미지는 지우지 않지만, GitHub은 30일이 지난 실행은 다시 실행하지 못한다 → 그보다 오래된 버전은 방법 B (`previous`) 또는 되돌리는 PR로 한다.
+**방법 A (권장, GitHub이 될 때)** — Actions → Deploy → **되돌릴 버전의 예전 성공 실행** → `deploy` 잡의 **Re-run this job** → 승인. 같은 `deploy.sh` 경로(백업·헬스체크·상태 기록)를 그대로 탄다. GitHub은 30일이 지난 실행은 다시 실행하지 못하고, GHCR에는 최근 30개 빌드와 최근 배포 버전만 남는다(21절) → 그보다 오래된 버전은 방법 B (`previous`) 또는 되돌리는 PR로 한다.
 
 **방법 B (서버에서 직접) — `rollback.sh`**
 
@@ -716,7 +759,7 @@ sudo /opt/scrap-app/deploy/rollback.sh
 
 끝 줄이 `✅ ...`와 `완료 — 운영 중: <SHA>`면 성공이다. ❌ 줄이 나오면 그 줄만 마스터에게 알린다.
 
-**⚠️ DB까지 되돌리기 (새 버전이 DB 구조를 바꿔 옛 버전이 못 읽을 때만)** — 그 백업 이후 저장한 스크랩은 사라진다. 위 명령 뒤에 `--restore-db <백업 파일 이름>`을 붙인다. 백업 이름은 (1)의 `백업:` 줄 또는 `sudo ls -l /opt/scrap-app/backups/`에서 고른다 (`predeploy-<UTC 시각>-<그때 운영 중이던 SHA 앞 12자>.db`).
+**⚠️ DB까지 되돌리기 (새 버전이 DB 구조를 바꿔 옛 버전이 못 읽을 때, 또는 DB 내용이 망가졌을 때)** — 그 백업 이후 저장한 스크랩은 사라진다. 위 명령 뒤에 `--restore-db <백업 파일 이름>`을 붙인다. 백업 이름은 (1)의 `백업:` 줄 또는 `sudo ls -l /opt/scrap-app/backups/`에서 고른다 (`predeploy-<UTC 시각>-<그때 운영 중이던 SHA 앞 12자>.db`).
 
 ```bash
 sudo /opt/scrap-app/deploy/rollback.sh previous --restore-db predeploy-<시각>-<sha>.db
@@ -733,4 +776,791 @@ chk "data/scrap.db 소유 10001, 600" test "$(sudo stat -c '%u %a' /opt/scrap-ap
 chk "api healthy" sh -c "sudo docker inspect -f '{{.State.Health.Status}}' scrap-app-api-1 | grep -qx healthy"
 ```
 
-정기 백업·외부 복사·복원 절차 전체는 Phase 8에서 이 문서에 추가한다.
+확인이 끝나면 15-4의 정리(보존본 삭제)를 한다. 일일 암호화 백업(Mac 보관본)에서 복원하는 방법과 복원 연습은 15절.
+
+### 12-7. 배포 후 메모리 확인
+
+**언제:** compose가 바뀐 배포, AI·의존성이 크게 바뀐 배포 뒤. 평소에도 가끔. 메모리 한도(`docker-compose.yml`의 `mem_limit`: api 384MB, web 128MB)는 이 결과를 근거로만 바꾼다 — 서버에서 compose를 직접 고치지 않고 결과를 마스터에게 알린다.
+
+1. 앱에서 무거운 동작을 한 번씩 한다: AI로 채우기 1회(긴 글), AI 검색 1회, 목록 스크롤.
+2. 바로 서버에서:
+
+```bash
+sudo docker stats --no-stream --format 'table {{.Name}}\t{{.MemUsage}}\t{{.MemPerc}}'   # 숫자만 나온다 (붙여도 된다)
+for c in scrap-app-api-1 scrap-app-web-1; do
+  chk "$c 메모리 한도의 70% 미만"   sh -c "sudo docker stats --no-stream --format '{{.MemPerc}}' $c | awk '{exit !(\$1+0 < 70)}'"
+  chk "$c 메모리 부족 종료 기록 없음" sh -c "sudo docker inspect -f '{{.State.OOMKilled}}' $c | grep -qx false"
+  chk "$c 재시작 0회"               sh -c "sudo docker inspect -f '{{.RestartCount}}' $c | grep -qx 0"
+done
+chk "커널 메모리 부족(OOM) 기록 없음 (이번 부팅)" sh -c "! sudo journalctl -k -b --no-pager | grep -qiE 'out of memory|oom-kill'"
+chk "서버 여유 메모리(available) 150MB 이상"     sh -c "free -m | awk '/^Mem:/{exit !(\$7 >= 150)}'"
+chk "스왑 사용 1GB 미만"                       sh -c "free -m | awk '/^Swap:/{exit !(\$3 < 1024)}'"
+```
+
+❌가 있으면 표의 숫자(`MemUsage`)와 ❌ 줄을 마스터에게 알린다. 70%는 여유 기준이다 — 넘어도 바로 문제는 아니지만, 한도에 닿으면 그 컨테이너만 종료 후 재시작된다 (api면 진행 중 요청이 끊긴다).
+
+---
+
+## 13. 일일 백업 (서버, age 암호화)
+
+**구성:** 서버의 `backup.sh`가 매일 한 번 DB의 일관된 사본을 만들어 **age 공개키로 암호화**한 파일만 `backups/daily/`에 남긴다 (최근 14개). Mac이 그 파일을 매일 가져가 30일 보관한다 (14절). 배포 직전 백업(`backups/predeploy-*.db`, 평문, `deploy.sh`가 만듦)은 그대로 따로 있다.
+
+- DB에는 로그인 정보가 들어 있다. 그래서 **서버 밖으로 나가는 백업은 반드시 암호화**하고, 복호화 개인키는 서버에도 Mac의 백업 폴더 옆에도 두지 않는다.
+- 사본은 api 컨테이너 안에서 Python `sqlite3` backup API로 만든다 (배포 직전 백업과 같은 방식, WAL 모드에서도 일관된 사본). 평문 사본은 서버에 파일로 남지 않고 곧바로 gzip → age로 흘러간다. api가 멈춰 있을 때 쓰는 일회용 컨테이너도 로그 기록을 끄고 `.env` 없이 띄운다 (출력이 Docker 로그에 남지 않는다). 배포 직전 백업(`predeploy-*.db`)은 지금처럼 평문 파일이다.
+- `deploy.sh`·`rollback.sh`와 같은 잠금을 쓴다 → 배포·롤백 중이면 끝날 때까지 기다렸다가 백업한다.
+
+### 13-1. age 키 만들기와 보관 — **사용자 Mac에서** (서버 아님)
+
+**무엇을:** 백업 암호화용 age 키 쌍을 만든다. **공개키**(`age1...`)는 서버에 두고, **개인키는 암호로 보호한 키 파일**(`scrap-backup-key.age`)로만 보관한다. 개인키가 평문 파일이나 클립보드로 나오지 않는다. 쓸 때(복원)는 `age -d -i scrap-backup-key.age ...`가 암호를 묻는다.
+
+> ⚠️ **키 파일이나 그 암호 중 하나라도 잃으면 암호화 백업은 아무도 복원할 수 없다.**
+> - 키 파일은 **두 곳**에 둔다: 이 Mac의 `~/.config/scrap-backup/scrap-backup-key.age` + 오프라인 사본(외장 USB 등. `-a`로 만든 글자 파일이라 종이에 인쇄해도 된다).
+> - 암호는 **비밀번호 관리자**에 둔다 (키 파일과 같은 곳에 적어 두지 않는다).
+> - 서버·저장소·백업 폴더(`~/ScrapBackups`)·채팅에는 두지 않는다.
+
+```bash
+brew install age                      # Homebrew. age, age-keygen 이 설치된다
+chk() { local m=$1; shift; if "$@" >/dev/null 2>&1; then echo "✅ $m"; else echo "❌ $m"; fi; }
+
+K=~/.config/scrap-backup/scrap-backup-key.age
+mkdir -p ~/.config/scrap-backup; chmod 700 ~/.config/scrap-backup
+[ -e "$K" ] && echo "이미 있음 — 덮어쓰지 않는다 (교체는 16-5)" || \
+  age-keygen 2>/dev/null | age -p -a -o "$K"     # 새 암호를 두 번 묻는다 → 비밀번호 관리자에 새 항목으로 저장
+chmod 600 "$K"
+age -d "$K" | age-keygen -y           # 암호를 한 번 묻고 공개키 한 줄(age1...)만 출력 → 13-2에서 서버에 넣는다 (공개해도 되는 값)
+```
+
+**확인 (암호를 한 번 더 묻는다 — 비밀번호 관리자에 저장한 암호로 입력):**
+
+```bash
+K=~/.config/scrap-backup/scrap-backup-key.age
+chk "키 파일이 암호로 보호됨 (평문 개인키 없음)" sh -c "head -n 1 '$K' | grep -qx -- '-----BEGIN AGE ENCRYPTED FILE-----' && ! grep -q AGE-SECRET-KEY '$K'"
+chk "키 파일 600"                               test "$(stat -f %Lp "$K")" = 600
+P=$(age -d "$K" | age-keygen -y)                                   # 암호 입력 (1)
+if [ "$(echo scrap-age-test | age -r "$P" | age -d -i "$K")" = scrap-age-test ]; then   # 암호 입력 (2)
+  echo "✅ 저장한 암호로 키 파일을 열고 복호화됨"; else echo "❌ 키 파일 또는 암호 확인"; fi
+cp "$K" /Volumes/<USB 이름>/                    # 두 번째 보관 장소 (USB 등)
+```
+
+암호 입력 두 번 모두 비밀번호 관리자에 저장한 암호로 한다 (저장본이 맞는지 확인하는 단계다). ❌이거나 암호가 맞지 않으면 키 파일을 지우고 처음부터 다시 만든다 (아직 서버에 공개키를 넣기 전이면 잃는 것이 없다).
+
+### 13-2. 서버: age 설치, 수신자(공개키) 파일
+
+```bash
+sudo apt-get install -y age
+sudo install -d -m 755 -o root -g root /opt/scrap-app/age
+sudo sh -c 'umask 022; cat > /opt/scrap-app/age/recipients.txt'
+# ↑ 커서가 멈추면: 13-1의 공개키 한 줄(age1...)을 붙여넣고 → Enter → Ctrl+D
+sudo chmod 644 /opt/scrap-app/age/recipients.txt
+```
+
+**확인:**
+
+```bash
+R=/opt/scrap-app/age/recipients.txt
+chk "age 설치됨"                           command -v age
+chk "수신자 파일 root 644"                  test "$(sudo stat -c '%U %a' $R)" = "root 644"
+chk "공개키(age1...) 줄 있음"               grep -qE '^age1[0-9a-z]+$' $R
+chk "개인키가 서버에 없음"                  sh -c "! grep -q 'AGE-SECRET-KEY-' $R"
+chk "deploy 가 읽을 수 있음"                sudo -u deploy test -r $R
+```
+
+> 수신자 파일에는 공개키를 여러 줄 넣을 수 있다 (그중 아무 개인키로나 풀린다). age 키를 바꿀 때 잠시 두 줄을 둔다 (16-5).
+
+### 13-3. 백업 폴더·스크립트 설치와 시험 실행
+
+`backup.sh`는 11절 표의 서버 파일이다 (11-1로 설치). 폴더가 없으면 만든다:
+
+```bash
+sudo install -d -m 700 -o deploy -g deploy /opt/scrap-app/backups/daily
+sudo -u deploy /opt/scrap-app/deploy/backup.sh; echo "exit=$?"
+```
+
+**확인:** 끝 줄이 `backup: 백업 완료: daily-<UTC 시각>.db.gz.age (... bytes, 보관 최대 14개)`이고 `exit=0`. 첫 배포 전(DB 없음)에는 `건너뜀: ...`과 `exit=0`이 정상이다.
+
+```bash
+D=/opt/scrap-app/backups/daily
+chk "암호화 백업이 있음"                  sh -c "sudo ls $D | grep -qE '^daily-[0-9]{8}T[0-9]{6}Z\.db\.gz\.age$'"
+chk "백업 파일이 age 형식"                sh -c "sudo sh -c 'head -c 21 \"\$(ls -1 $D/daily-*.age | tail -n 1)\"' | grep -qx 'age-encryption.org/v1'"
+chk "백업 파일 권한 600, deploy 소유"      sh -c "sudo sh -c \"stat -c '%U %a' $D/daily-*.age\" | sort -u | grep -qx 'deploy 600'"
+chk "daily/ 에 평문 SQLite 파일 없음"     sh -c "! sudo sh -c 'for f in $D/*; do head -c 15 \"\$f\"; echo; done' | grep -q 'SQLite format 3'"
+chk "data/ 에 임시 사본이 남지 않음"       sh -c "! sudo test -e /opt/scrap-app/data/.daily-backup.tmp"
+chk "backup.log 에 완료 기록"             sh -c "sudo tail -n 5 /opt/scrap-app/logs/backup.log | grep -q '백업 완료'"
+```
+
+실패하면 `실패:` 줄 그대로 마스터에게 알린다 (도메인·비밀값은 기록되지 않는다). 서버에서는 백업을 풀 수 없다 — 내용 확인은 Mac에서 15-5로 한다.
+
+### 13-4. 매일 자동 실행 (cron)
+
+**무엇을:** `deploy` 사용자로 매일 18:30 UTC(한국 03:30)에 실행한다. 스크립트가 직접 `logs/backup.log`에 기록하므로 cron 출력은 버린다.
+
+```bash
+timedatectl show -p Timezone --value     # 서버 시간대. Etc/UTC 가 아니면 아래 시각을 그 시간대로 바꾼다
+sudo tee /etc/cron.d/scrap-app-backup >/dev/null <<'EOF'
+# 일일 DB 백업 (age 암호화) — deploy/README.md 13절. 기록은 /opt/scrap-app/logs/backup.log
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+30 18 * * * deploy /opt/scrap-app/deploy/backup.sh >/dev/null 2>&1
+EOF
+sudo chmod 644 /etc/cron.d/scrap-app-backup
+chk "cron 파일 설치됨 (root 644)" test "$(sudo stat -c '%U %a' /etc/cron.d/scrap-app-backup)" = "root 644"
+chk "cron 실행 중"                systemctl is-active cron
+```
+
+- 백업은 보통 몇 초 걸린다. 그 사이에 배포를 승인하면 `deploy.sh`가 "다른 배포가 진행 중"으로 바로 끝난다 (아무것도 바꾸지 않음). 한국 시각 03:30 무렵을 피하거나, 그렇게 끝났으면 `deploy` 잡을 **Re-run**한다. 거꾸로 배포 중에 백업 시각이 되면 백업이 배포가 끝나기를 기다린다.
+- `logs/backup.log`는 3-3의 logrotate 설정(`logs/*.log`)이 함께 돌린다.
+
+### 13-5. 확인 (다음 날, 이후 수시로)
+
+```bash
+D=/opt/scrap-app/backups/daily
+chk "24시간 안에 만든 백업 있음"      sh -c "sudo find $D -maxdepth 1 -name 'daily-*.db.gz.age' -mmin -1500 | grep -q ."
+chk "백업 14개 이하 보관"            sh -c "[ \$(sudo find $D -maxdepth 1 -name 'daily-*.db.gz.age' | wc -l) -le 14 ]"
+chk "최근 기록에 실패 없음"           sh -c "! sudo tail -n 20 /opt/scrap-app/logs/backup.log | grep -q '실패'"
+chk "logrotate 가 backup.log 를 봄"  sh -c "sudo logrotate -d /etc/logrotate.d/scrap-app 2>&1 | grep -q backup.log"
+sudo tail -n 3 /opt/scrap-app/logs/backup.log
+```
+
+---
+
+## 14. Mac으로 백업 가져오기 (외부 보관)
+
+**구성:** 사용자 Mac이 매일 서버에 접속해 아직 없는 암호화 백업만 가져온다. 접속은 **백업 수신 전용 SSH 키**로만 하고, 서버는 그 키에 강제 명령(`backup-send.sh`)을 걸어 **암호화 백업 목록과 파일만** 내보낸다 (셸·다른 파일·평문 불가). Mac은 받기·보관만 하고 복호화하지 않는다 (개인키 불필요).
+
+파일: `deploy/mac/pull-backups.sh`(스크립트), `deploy/mac/config.example`(설정 예시), `deploy/mac/scrap-backup.plist.example`(launchd 예시). Mac에서 쓰는 명령에도 13-1의 `chk` 한 줄을 먼저 붙여넣는다.
+
+### 14-1. Mac 준비: 수신 전용 키
+
+```bash
+# Mac 터미널. 저장소 폴더 안에 만들지 않는다. launchd 가 무인으로 쓰므로 암호(passphrase)는 비운다.
+ssh-keygen -t ed25519 -a 100 -N '' -C 'scrap-backup-pull' -f ~/.ssh/scrap_backup_ed25519
+cat ~/.ssh/scrap_backup_ed25519.pub
+```
+
+**확인:** `ssh-ed25519 AAAA... scrap-backup-pull` 한 줄. 이 **공개키**만 서버에 등록한다. 이 키는 CI 배포 키(`scrap_ci_deploy`)와 다른 키다 — 섞어 쓰지 않는다.
+
+### 14-2. 서버에 수신 키 등록 (강제 명령, 별도 줄)
+
+**무엇을:** `deploy` 사용자의 `authorized_keys`에 **줄을 하나 추가**한다 (CI 키 줄은 그대로 둔다). 이 키로 접속하면 `backup-send.sh`만 실행된다.
+
+```bash
+PUBKEY='ssh-ed25519 AAAA...여기에 14-1의 .pub 한 줄 전체... scrap-backup-pull'
+AK=/home/deploy/.ssh/authorized_keys
+
+sudo cp -p "$AK" "$AK.bak"
+printf 'restrict,command="/opt/scrap-app/deploy/backup-send.sh" %s\n' "$PUBKEY" | sudo tee -a "$AK" >/dev/null
+sudo ssh-keygen -lf "$AK"
+```
+
+**확인:**
+
+```bash
+AK=/home/deploy/.ssh/authorized_keys
+chk "CI 키 줄(deploy.sh) 그대로 1개"      sh -c "sudo grep -c '^restrict,command=\"/opt/scrap-app/deploy/deploy.sh\" ' $AK | grep -qx 1"
+chk "백업 수신 키 줄(backup-send.sh) 1개"  sh -c "sudo grep -c '^restrict,command=\"/opt/scrap-app/deploy/backup-send.sh\" ' $AK | grep -qx 1"
+chk "강제 명령 없는 줄 없음"               sh -c "! sudo grep -vE '^(restrict,command=\"/opt/scrap-app/deploy/(deploy|backup-send)\.sh\" |#|\$)' $AK | grep -q ."
+chk "authorized_keys deploy 600"          test "$(sudo stat -c '%U %a' $AK)" = "deploy 600"
+chk "backup-send.sh 설치됨 (11절)"         test -x /opt/scrap-app/deploy/backup-send.sh
+```
+
+모두 ✅면 `sudo rm "$AK.bak"`. CI 키 줄이 사라졌으면(❌) `sudo cp -p "$AK.bak" "$AK"`로 되돌리고 다시 한다.
+
+### 14-3. 서버 호스트 키 등록 (Mac)
+
+Mac은 미리 등록한 서버 호스트 키로만 접속한다 (`StrictHostKeyChecking=yes`, 처음 접속 때 묻지 않는다). 값은 **서버에서 직접** 읽는다 (12-1 (b)의 `DEPLOY_KNOWN_HOSTS`와 같은 한 줄):
+
+```bash
+# 서버
+D=$(sudo cat /opt/scrap-app/duckdns/domain); D="${D%.duckdns.org}.duckdns.org"
+printf '%s %s\n' "$D" "$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub)"
+```
+
+```bash
+# Mac — 위 출력 한 줄을 붙여넣고 → Enter → Ctrl+D
+cat > ~/.ssh/scrap_backup_known_hosts
+chmod 600 ~/.ssh/scrap_backup_known_hosts
+H='<이름>.duckdns.org'
+chk "호스트 키 파일에 서버 주소 있음" ssh-keygen -F "$H" -f ~/.ssh/scrap_backup_known_hosts
+```
+
+서버를 새로 만들면 호스트 키가 바뀌므로 이 단계를 다시 한다 (그 전에는 Mac이 접속을 거부한다 — 정상).
+
+### 14-4. 스크립트·설정 설치 (Mac)
+
+launchd가 실행할 파일은 Desktop·Documents·Downloads **밖에** 둔다 (그 폴더들은 macOS 개인정보 보호 권한 때문에 백그라운드 작업이 읽지 못한다). 저장소 폴더에서:
+
+```bash
+mkdir -p ~/.local/bin ~/.config/scrap-backup
+install -m 755 deploy/mac/pull-backups.sh ~/.local/bin/scrap-pull-backups.sh
+[ -e ~/.config/scrap-backup/config ] || install -m 600 deploy/mac/config.example ~/.config/scrap-backup/config
+nano ~/.config/scrap-backup/config     # SCRAP_BACKUP_HOST 의 <이름> 을 실제 서브도메인으로 바꾼다
+```
+
+- 설정 파일은 저장소 밖(`~/.config`)에 있다. 실제 주소를 넣은 파일을 저장소에 복사하지 않는다.
+- 보관 폴더 기본값은 `~/ScrapBackups`(700). Time Machine 백업에 함께 들어가도 암호화된 파일뿐이다.
+- 저장소의 스크립트가 바뀌면(PR 설명에 적힌다) 위 `install` 줄만 다시 실행한다.
+
+### 14-5. 첫 실행 확인 (Mac)
+
+```bash
+~/.local/bin/scrap-pull-backups.sh; echo "exit=$?"
+```
+
+**확인:** 끝 줄이 `pull: 완료: 서버 N개, 새로 받음 N개, ...`이고 `exit=0`.
+
+```bash
+chk "보관 폴더 700"                    test "$(stat -f %Lp ~/ScrapBackups)" = 700
+chk "암호화 백업을 받음"                 sh -c "ls ~/ScrapBackups | grep -qE '^daily-[0-9]{8}T[0-9]{6}Z\.db\.gz\.age$'"
+chk "받은 파일이 age 형식"              sh -c "head -c 21 \"\$(ls -1 ~/ScrapBackups/daily-*.age | tail -n 1)\" | grep -qx 'age-encryption.org/v1'"
+chk "조각(.part) 파일 없음"             sh -c "! ls -a ~/ScrapBackups | grep -q '\.part$'"
+H='<이름>.duckdns.org'
+chk "수신 키로는 다른 요청이 거부됨"     sh -c "ssh -F /dev/null -T -n -i ~/.ssh/scrap_backup_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$HOME/.ssh/scrap_backup_known_hosts deploy@$H 'get ../../.env'; [ \$? -eq 2 ]"
+```
+
+`exit=2`면 설정 오류다 — 메시지에 적힌 절을 본다. `Host key verification failed`면 14-3, `Permission denied`면 14-2를 다시 확인한다.
+
+### 14-6. 매일 자동 실행 (launchd)
+
+```bash
+P=~/Library/LaunchAgents/local.scrap-backup.pull.plist
+mkdir -p ~/Library/LaunchAgents
+sed "s#/Users/USERNAME#$HOME#g" deploy/mac/scrap-backup.plist.example > "$P"   # 저장소 폴더에서
+chk "plist 형식 정상"             plutil -lint "$P"
+chk "자리표시자가 남지 않음"        sh -c "! grep -q USERNAME '$P'"
+launchctl bootstrap "gui/$(id -u)" "$P"
+launchctl kickstart -k "gui/$(id -u)/local.scrap-backup.pull"    # 지금 한 번 실행
+```
+
+- 매일 10:00(Mac 시각)에 실행한다. 그 시각에 잠자기 중이었으면 **깨어난 뒤 한 번** 실행된다. 전원이 꺼져 있던 날은 건너뛰고, 다음 실행이 밀린 백업까지 받는다 (서버는 14일 치를 갖고 있다).
+- 처음 등록하면 macOS가 "백그라운드 항목 추가" 알림을 띄울 수 있다 (시스템 설정 → 일반 → 로그인 항목에서 켜져 있어야 한다).
+- 끄기: `launchctl bootout "gui/$(id -u)/local.scrap-backup.pull"`. 시각을 바꾸려면 plist를 고친 뒤 끄고 다시 `bootstrap`한다.
+
+### 14-7. 확인 (수시로, Mac)
+
+```bash
+chk "launchd 작업 등록됨"        launchctl print "gui/$(id -u)/local.scrap-backup.pull"
+chk "마지막 실행 종료 코드 0"    sh -c "launchctl print gui/$(id -u)/local.scrap-backup.pull | grep -qE 'last exit code = 0\$'"
+chk "2일 안에 받은 백업 있음"     sh -c "find ~/ScrapBackups -name 'daily-*.db.gz.age' -mtime -2 | grep -q ."
+tail -n 3 ~/Library/Logs/scrap-backup.log
+```
+
+- 실패하면 macOS 알림("스크랩 백업")이 뜬다. 최근 3일 동안 새 백업이 없어도 실패로 알린다 (서버 13-5 확인).
+- Mac은 30일 지난 백업을 지우되, 날짜와 상관없이 최근 7개는 남기고, **매월 첫 백업은 12개월 보관**한다 (설정 `SCRAP_BACKUP_KEEP_DAYS`, `SCRAP_BACKUP_KEEP_MIN`, `SCRAP_BACKUP_KEEP_MONTHLY`).
+- 백업 하나가 500MB(`SCRAP_BACKUP_MAX_MB`)를 넘거나, 이름의 날짜가 Mac의 오늘보다 1일 넘게 미래면 받지 않고 실패로 알린다. 미래 날짜면 서버 시각을 확인한다: `timedatectl show -p NTPSynchronized --value`(서버, `yes`여야 한다).
+
+---
+
+## 15. 백업 복원
+
+| 상황 | 쓰는 백업 | 절 |
+|---|---|---|
+| 배포 직후 DB 문제 (새 버전이 DB를 바꿈) | 서버 `backups/predeploy-*.db` (평문) | 15-1 |
+| 며칠 전 상태로 되돌리기, 서버 디스크 문제 | Mac `~/ScrapBackups/daily-*.db.gz.age` (암호화) | 15-2 |
+| 서버를 새로 만들어 데이터 옮기기 | Mac 암호화 백업 | 15-3 |
+
+**원칙 (WAL):** DB는 WAL 모드라 `scrap.db` 옆에 `scrap.db-wal`·`scrap.db-shm`이 있다. 복원할 때는 **api를 멈춘 뒤** 이 두 파일을 지우고 `scrap.db`를 바꿔 넣어야 한다 (옛 `-wal`이 새 DB에 덮어씌워지면 DB가 망가진다). `rollback.sh --restore-db`가 이 순서(정지 → 현재 DB 3개 파일 보존·비교 → `-wal`/`-shm` 삭제 → 교체(10001, 600) → 기동 → 헬스체크)를 그대로 하므로 **직접 파일을 옮기지 않고 이 스크립트를 쓴다.**
+
+> ⚠️ 복원하면 그 백업 이후 저장한 스크랩·설정은 사라진다. 지금 DB는 `/root/db-before-restore-<시각>/`에 보존되므로, 잘못 복원했으면 같은 방법으로 그 파일을 다시 넣을 수 있다.
+
+### 15-1. 배포 직전 백업에서 (서버 안에서 끝남)
+
+12-6 방법 B의 "DB까지 되돌리기"와 같다. 버전은 그대로 두고 DB만 되돌리려면 `current`를 쓴다:
+
+```bash
+sudo /opt/scrap-app/deploy/rollback.sh                                     # 백업 목록 보기
+sudo /opt/scrap-app/deploy/rollback.sh current --restore-db predeploy-<시각>-<sha>.db
+```
+
+끝나면 15-4로 확인한다.
+
+### 15-2. Mac의 암호화 백업에서
+
+**(a) Mac: 복호화·검사** — 13-1의 암호 보호 키 파일을 쓴다 (암호를 묻는다. Mac 사본이 없으면 USB 사본 경로를 `K`에 넣는다).
+
+```bash
+F=~/ScrapBackups/daily-<UTC 시각>.db.gz.age       # 되돌릴 시점의 백업
+K=~/.config/scrap-backup/scrap-backup-key.age
+T=$(mktemp -d); chmod 700 "$T"
+age -d -i "$K" -o "$T/scrap.db.gz" "$F"
+gunzip "$T/scrap.db.gz"; chmod 600 "$T/scrap.db"
+chk "복호화·압축 해제됨"      test -s "$T/scrap.db"
+chk "SQLite 파일"            sh -c "head -c 15 '$T/scrap.db' | grep -qx 'SQLite format 3'"
+chk "integrity_check ok"     sh -c "/usr/bin/sqlite3 '$T/scrap.db' 'PRAGMA integrity_check' | grep -qx ok"
+```
+
+**(b) Mac → 서버로 보내기** (관리 사용자, OCI 기본 `ubuntu`. 서버의 관리 사용자 홈에 600으로 올린다):
+
+```bash
+scp "$T/scrap.db" ubuntu@<이름>.duckdns.org:scrap-restore.db
+rm -rf "$T"                          # Mac 의 평문 사본 삭제
+```
+
+**(c) 서버: 복원** — `backups/`에 이름을 붙여 넣고 `rollback.sh`로 바꿔 넣는다.
+
+```bash
+N="restore-$(date -u +%Y%m%dT%H%M%SZ).db"
+sudo install -m 600 -o deploy -g deploy ~/scrap-restore.db "/opt/scrap-app/backups/$N" && rm -f ~/scrap-restore.db
+chk "복원할 파일 준비됨" sudo test -s "/opt/scrap-app/backups/$N"
+sudo /opt/scrap-app/deploy/rollback.sh current --restore-db "$N"
+```
+
+끝 줄이 `완료 — 운영 중: <SHA>`면 15-4로 확인한다.
+
+### 15-3. 새 서버로 옮길 때 (첫 배포 전)
+
+15-2 (a)·(b)를 한 뒤, 새 서버에서 **첫 배포 전에** (`data/`에 아무 파일도 없을 때):
+
+```bash
+chk "data/ 비어 있음 (첫 배포 전)" sh -c "[ -z \"\$(sudo ls -A /opt/scrap-app/data)\" ]"
+sudo install -m 600 -o 10001 -g 10001 ~/scrap-restore.db /opt/scrap-app/data/scrap.db && rm -f ~/scrap-restore.db
+chk "scrap.db 소유 10001, 600" test "$(sudo stat -c '%u %a' /opt/scrap-app/data/scrap.db)" = "10001 600"
+```
+
+그다음 "서버를 새로 만들 때" 5번(첫 배포)부터 이어 간다. 첫 배포는 이 DB를 그대로 쓴다.
+
+### 15-4. 복원 후 확인과 정리
+
+```bash
+chk "api healthy"                    sh -c "sudo docker inspect -f '{{.State.Health.Status}}' scrap-app-api-1 | grep -qx healthy"
+chk "data/scrap.db 소유 10001, 600"   test "$(sudo stat -c '%u %a' /opt/scrap-app/data/scrap.db)" = "10001 600"
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec -T api python -m app.admin fts-check   # ✅/❌ 한 줄 (19-3)
+```
+
+- 브라우저에서 로그인해 목록·검색이 되는지 본다. 복원한 백업 시점의 비밀번호·2차 인증으로 로그인한다. (로그인 세션도 그 시점으로 돌아가므로 다른 기기는 다시 로그인해야 할 수 있다.)
+- `fts-check`가 ❌면 19-3의 `fts-rebuild`를 실행한다. 옛 이미지라 `app.admin`이 없으면 이 줄은 건너뛴다.
+
+**⚠️ 정리 (확인이 끝난 뒤에만):** 평문 DB 사본을 서버에 오래 두지 않는다.
+
+```bash
+sudo sh -c 'ls -d /root/db-before-restore-* /opt/scrap-app/backups/restore-*.db 2>/dev/null'
+sudo rm -rf /root/db-before-restore-<시각>          # 위 목록에서 이번 복원의 보존본
+sudo sh -c 'rm -f /opt/scrap-app/backups/restore-*.db'
+chk "복원용 평문 사본 정리됨" sh -c "! sudo ls /opt/scrap-app/backups | grep -q '^restore-'"
+```
+
+### 15-5. 정기 복원 연습 (월 1회, Mac에서만)
+
+**무엇을:** 최근 암호화 백업이 실제로 풀리고 온전한지 Mac 안에서만 확인한다. **서버에 올리지 않는다.** 개인키 보관본이 쓸 수 있는 상태인지도 함께 확인된다.
+
+```bash
+F=$(ls -1 ~/ScrapBackups/daily-*.db.gz.age | tail -n 1); echo "${F##*/}"
+K=~/.config/scrap-backup/scrap-backup-key.age
+T=$(mktemp -d); chmod 700 "$T"
+age -d -i "$K" "$F" | gunzip > "$T/scrap.db"       # 키 파일 암호를 묻는다 (비밀번호 관리자의 암호)
+S=/usr/bin/sqlite3
+chk "복호화·압축 해제됨"            test -s "$T/scrap.db"
+chk "integrity_check ok"           sh -c "$S '$T/scrap.db' 'PRAGMA integrity_check' | grep -qx ok"
+chk "검색 색인(FTS) 무결성"         $S "$T/scrap.db" "INSERT INTO scraps_fts(scraps_fts) VALUES('integrity-check');"
+chk "사용자 1명"                    sh -c "$S '$T/scrap.db' 'SELECT count(*) FROM users' | grep -qx 1"
+$S "$T/scrap.db" "SELECT count(*) || '개 스크랩, 마지막 저장 ' || ifnull(max(created_at), '-') FROM scraps"
+rm -rf "$T"
+chk "평문 사본 삭제됨" test ! -e "$T"
+```
+
+- 스크랩 수·마지막 저장 시각이 기억과 대략 맞으면 된다. 이 출력에는 비밀값이 없다.
+- 복호화가 ❌면 키 파일·암호 보관본을 확인한다 (USB 사본으로도 해 본다). 둘 다 안 되면 즉시 16-5로 새 키를 만든다 — 그 전 백업은 원래 키로만 풀린다.
+- 몇 달에 한 번은 오프라인 사본(USB)으로도 해 본다 (`K=/Volumes/<USB 이름>/scrap-backup-key.age`).
+
+---
+
+## 16. 비밀값 교체
+
+**공통:**
+- 값은 화면에 출력하지 않는다. 확인은 형식만 보는 ✅/❌ 줄로 한다 (17절).
+- `.env`를 바꾼 뒤에는 `sudo /opt/scrap-app/deploy/rollback.sh current`로 같은 버전을 다시 올려 반영한다 (컨테이너가 새 `.env`로 다시 만들어진다. 끝 줄 `완료 — 운영 중: <SHA>`).
+- 유출이 의심되면 다른 조사보다 **교체가 먼저**다.
+
+### 16-1. `SESSION_SECRET`
+
+> ⚠️ 바꾸면 **모든 기기가 로그아웃**된다 (아이폰 홈 화면 앱 포함). 다시 로그인할 때 2차 인증 코드가 필요하다.
+
+값을 화면에 띄우지 않고 파일 안에서 바로 바꾼다:
+
+```bash
+sudo bash <<'EOF'
+set -euo pipefail; umask 077
+f=/opt/scrap-app/.env; t=$(mktemp)
+NEW="$(openssl rand -hex 32)" awk '
+  BEGIN { n = ENVIRON["NEW"] }
+  /^[[:space:]]*SESSION_SECRET[[:space:]]*=/ { if (!d) print "SESSION_SECRET=" n; d = 1; next }
+  { print }
+  END { if (!d) print "SESSION_SECRET=" n }' "$f" > "$t"
+install -m 600 -o deploy -g deploy "$t" "$f"; rm -f "$t"
+EOF
+E=/opt/scrap-app/.env
+chk "SESSION_SECRET 한 줄"          sh -c "sudo grep -c '^SESSION_SECRET=' $E | grep -qx 1"
+chk "SESSION_SECRET 64자 16진수"     sudo grep -qE '^SESSION_SECRET=[0-9a-f]{64}$' $E
+chk ".env deploy 600"              test "$(sudo stat -c '%U %a' $E)" = "deploy 600"
+sudo /opt/scrap-app/deploy/rollback.sh current
+```
+
+### 16-2. `ANTHROPIC_API_KEY`
+
+1. Anthropic Console → API Keys → **Create Key** (이름 예: `scrap-app-<연월>`, 이 앱 전용). 키를 복사한다.
+2. 서버에서 `sudo -u deploy nano /opt/scrap-app/.env` → `ANTHROPIC_API_KEY=` 뒤의 값을 새 키로 바꾼다 (따옴표·공백 없이 한 줄). 저장.
+3. 확인 후 반영:
+   ```bash
+   E=/opt/scrap-app/.env
+   chk "ANTHROPIC_API_KEY 한 줄"         sh -c "sudo grep -c '^ANTHROPIC_API_KEY=' $E | grep -qx 1"
+   chk "sk-ant- 로 시작, 자리표시자 아님"  sh -c "sudo grep -E '^ANTHROPIC_API_KEY=sk-ant-[A-Za-z0-9_-]{20,}$' $E | grep -qv 'sk-ant-xxxx'"
+   sudo /opt/scrap-app/deploy/rollback.sh current
+   ```
+4. 앱에서 "AI로 채우기"를 한 번 해 본다 (성공해야 다음 단계로).
+5. Console에서 **옛 키를 삭제(Delete)**한다. 사용량 화면에서 새 키로 호출이 잡히는지 본다.
+6. Console의 **월 지출 한도**(Limits / spend limit)가 걸려 있는지 확인한다. 한도에 닿으면 앱은 "이번 달 한도 도달"로 응답한다 (AI만 멈추고 나머지 기능은 정상).
+
+### 16-3. CI 배포 키 (정기 교체)
+
+**권장 주기:** 6개월마다, 그리고 키가 있던 PC를 잃었거나 GitHub 계정·시크릿 노출이 의심될 때 즉시. 새 키를 **먼저 추가**하고 확인한 뒤 옛 줄을 지우므로 배포가 끊기지 않는다.
+
+(a) PC: 새 키 만들기
+
+```bash
+C="scrap-ci-deploy-$(date +%Y%m)"
+ssh-keygen -t ed25519 -a 100 -N '' -C "$C" -f ~/.ssh/scrap_ci_deploy_new
+cat ~/.ssh/scrap_ci_deploy_new.pub
+```
+
+(b) 서버: 줄 추가 (옛 줄·백업 수신 키 줄은 그대로)
+
+```bash
+PUBKEY='ssh-ed25519 AAAA...(a)의 .pub 한 줄 전체... scrap-ci-deploy-<연월>'
+AK=/home/deploy/.ssh/authorized_keys
+sudo cp -p "$AK" "$AK.bak"
+printf 'restrict,command="/opt/scrap-app/deploy/deploy.sh" %s\n' "$PUBKEY" | sudo tee -a "$AK" >/dev/null
+chk "deploy.sh 강제 명령 줄 2개 (옛 키 + 새 키)" sh -c "sudo grep -c '^restrict,command=\"/opt/scrap-app/deploy/deploy.sh\" ' $AK | grep -qx 2"
+```
+
+(c) PC: 12-2 (c)를 `~/.ssh/scrap_ci_deploy` 대신 `~/.ssh/scrap_ci_deploy_new`로 실행한다 (✅ 3개).
+
+(d) GitHub: Settings → Environments → `production` → `DEPLOY_SSH_KEY` → 새 개인키로 바꾼다 (`pbcopy < ~/.ssh/scrap_ci_deploy_new` → 붙여넣기 → `pbcopy < /dev/null`).
+
+(e) 시험 배포: Actions → Deploy → 가장 최근 성공 실행 → `deploy` 잡 **Re-run this job** → 승인 → `배포 성공`.
+
+(f) 서버: 옛 줄 삭제 (**CI 키 전용** — 백업 수신 키는 16-4의 블록을 쓴다) — **줄 끝의 키 주석**으로 고른다 (처음 등록한 키의 주석은 `scrap-ci-deploy`).
+
+```bash
+OLD='scrap-ci-deploy'          # 지울 키의 주석 (아래 ssh-keygen -lf 출력에서 각 줄의 주석 확인)
+AK=/home/deploy/.ssh/authorized_keys
+sudo ssh-keygen -lf "$AK"
+NB=$(sudo grep -c 'backup-send.sh' "$AK" || true)     # 백업 수신 키 줄 수 (그대로여야 한다)
+sudo cp -p "$AK" "$AK.bak"
+sudo awk -v c="$OLD" '$NF != c' "$AK.bak" | sudo tee "$AK" >/dev/null
+chk "deploy.sh 강제 명령 줄 1개"     sh -c "sudo grep -c '^restrict,command=\"/opt/scrap-app/deploy/deploy.sh\" ' $AK | grep -qx 1"
+chk "옛 키 주석 없음"                sh -c "! sudo awk -v c='$OLD' '\$NF == c' $AK | grep -q ."
+chk "백업 수신 키 줄 수 그대로"       sh -c "sudo grep -c 'backup-send.sh' $AK | grep -qx '$NB'"
+```
+
+모두 ✅면 `sudo rm "$AK.bak"`. ❌면 `sudo cp -p "$AK.bak" "$AK"`로 되돌린다.
+
+(g) PC: 옛 키가 거부되는지 확인하고 파일을 정리한다.
+
+```bash
+H='<이름>.duckdns.org'
+KH="$HOME/.ssh/scrap_backup_known_hosts"     # 14-3의 호스트 키 파일 (12-2 (c)처럼 DEPLOY_KNOWN_HOSTS 한 줄 파일이어도 된다)
+chk "옛 CI 키는 거부됨 (Permission denied)" sh -c "ssh -T -n -i ~/.ssh/scrap_ci_deploy -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=$KH deploy@$H ping 2>&1 | grep -q 'Permission denied'"
+# ✅ 뒤에만:
+rm -f ~/.ssh/scrap_ci_deploy ~/.ssh/scrap_ci_deploy.pub
+mv ~/.ssh/scrap_ci_deploy_new ~/.ssh/scrap_ci_deploy; mv ~/.ssh/scrap_ci_deploy_new.pub ~/.ssh/scrap_ci_deploy.pub
+```
+
+### 16-4. 백업 수신 키
+
+새 키를 **먼저 추가**하고 Mac에서 받기를 확인한 뒤 옛 줄을 지운다. CI 키 줄은 건드리지 않는다.
+
+(a) Mac: 새 키 만들기
+
+```bash
+C="scrap-backup-pull-$(date +%Y%m)"
+ssh-keygen -t ed25519 -a 100 -N '' -C "$C" -f ~/.ssh/scrap_backup_ed25519_new
+cat ~/.ssh/scrap_backup_ed25519_new.pub
+```
+
+(b) 서버: 줄 추가 (14-2와 같은 형식)
+
+```bash
+PUBKEY='ssh-ed25519 AAAA...(a)의 .pub 한 줄 전체... scrap-backup-pull-<연월>'
+AK=/home/deploy/.ssh/authorized_keys
+printf 'restrict,command="/opt/scrap-app/deploy/backup-send.sh" %s\n' "$PUBKEY" | sudo tee -a "$AK" >/dev/null
+chk "backup-send.sh 강제 명령 줄 2개 (옛 키 + 새 키)" sh -c "sudo grep -c '^restrict,command=\"/opt/scrap-app/deploy/backup-send.sh\" ' $AK | grep -qx 2"
+```
+
+(c) Mac: 새 키로 받기 확인
+
+```bash
+SCRAP_BACKUP_KEY=~/.ssh/scrap_backup_ed25519_new ~/.local/bin/scrap-pull-backups.sh; echo "exit=$?"     # exit=0
+```
+
+(d) 서버: 옛 수신 키 줄 삭제 (**백업 수신 키 전용**)
+
+```bash
+OLD='scrap-backup-pull'        # 지울 키의 주석 (아래 ssh-keygen -lf 출력에서 확인)
+AK=/home/deploy/.ssh/authorized_keys
+sudo ssh-keygen -lf "$AK"
+NC=$(sudo grep -c 'deploy/deploy.sh' "$AK" || true)   # CI 키 줄 수 (그대로여야 한다)
+sudo cp -p "$AK" "$AK.bak"
+sudo awk -v c="$OLD" '$NF != c' "$AK.bak" | sudo tee "$AK" >/dev/null
+chk "backup-send.sh 강제 명령 줄 1개 (새 키)" sh -c "sudo grep -c '^restrict,command=\"/opt/scrap-app/deploy/backup-send.sh\" ' $AK | grep -qx 1"
+chk "옛 수신 키 줄 0개"                     sh -c "! sudo awk -v c='$OLD' '\$NF == c' $AK | grep -q ."
+chk "CI 키 줄 수 그대로"                     sh -c "sudo grep -c 'deploy/deploy.sh' $AK | grep -qx '$NC'"
+```
+
+모두 ✅면 `sudo rm "$AK.bak"`. ❌면 `sudo cp -p "$AK.bak" "$AK"`로 되돌리고 `OLD` 값부터 다시 확인한다.
+
+(e) Mac: 옛 키가 거부되는지 확인하고 파일을 정리한다.
+
+```bash
+H='<이름>.duckdns.org'
+chk "옛 수신 키는 거부됨 (Permission denied)" sh -c "ssh -F /dev/null -T -n -i ~/.ssh/scrap_backup_ed25519 -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=\$HOME/.ssh/scrap_backup_known_hosts deploy@$H list 2>&1 | grep -q 'Permission denied'"
+# ✅ 뒤에만: 새 키를 원래 이름으로 (설정 파일·launchd 는 원래 이름을 쓴다)
+rm -f ~/.ssh/scrap_backup_ed25519 ~/.ssh/scrap_backup_ed25519.pub
+mv ~/.ssh/scrap_backup_ed25519_new ~/.ssh/scrap_backup_ed25519; mv ~/.ssh/scrap_backup_ed25519_new.pub ~/.ssh/scrap_backup_ed25519.pub
+~/.local/bin/scrap-pull-backups.sh; echo "exit=$?"     # exit=0
+```
+
+### 16-5. age 키
+
+1. 13-1로 새 키 파일을 만든다. 옛 키 파일과 섞이지 않게 `K`를 `~/.config/scrap-backup/scrap-backup-key-<연월>.age`로 바꿔 실행하고, 새 암호를 비밀번호 관리자에 새 항목으로 저장한다. 두 번째 보관 장소(USB)에도 복사한다.
+2. 서버 수신자 파일을 새 공개키 **한 줄로** 바꾼다 (13-2의 `cat >` 명령으로 덮어쓰고 13-2 확인).
+3. `sudo -u deploy /opt/scrap-app/deploy/backup.sh`로 새 백업을 하나 만들고, Mac에서 받은 뒤 15-5로 **새 키 파일로** 풀리는지 확인한다 (`K`를 새 파일로).
+4. 그 전에 만든 백업(서버 14일·Mac 30일, 월간 장기 보관본 12개월)은 **옛 키 파일로만** 풀린다. 옛 키 파일과 암호는 그 백업들이 모두 지워질 때까지 보관하고, 그 뒤에 지운다. 새 키 파일을 기본 이름(`scrap-backup-key.age`)으로 바꿀 때는 옛 파일을 `scrap-backup-key-old.age` 같은 이름으로 남긴다.
+   - 옛 개인키가 노출됐을 수 있어 바꾸는 경우: 옛 키로 암호화된 백업을 계속 둘지(복원 가능성) 지울지(노출 범위) 정한다. 지우려면 서버 `backups/daily/`와 Mac `~/ScrapBackups/`에서 새 키 이전 날짜 파일을 지운다.
+
+### 16-6. DuckDNS 토큰
+
+DuckDNS 계정 화면에서 토큰을 새로 받은 뒤(화면 구성은 바뀔 수 있다), 4-2의 `cat >` 명령으로 서버 파일을 덮어쓰고 4-3으로 확인한다. 토큰은 서버 파일 한 곳에만 있다 (저장소·CI·로그에 없음 — 4-4 확인의 `grep -c` 줄이 `0`).
+
+### 16-7. `.env`에 넣지 않는 변수
+
+`.env`의 모든 줄은 api 컨테이너의 환경변수가 된다. 앱이 쓰는 Anthropic SDK는 키 말고도 접속 주소·인증·프록시를 환경변수에서 읽으므로 아래 이름은 **넣지 않는다** (`.env.example`에 있는 이름만 쓴다):
+
+- `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`(소문자 포함)
+- 로컬 개발 전용: `ALLOWED_ORIGINS`, `COOKIE_SECURE`, `ENABLE_API_DOCS`
+
+```bash
+E=/opt/scrap-app/.env
+chk ".env 에 SDK 접속·프록시 변수 없음" sh -c "! sudo grep -qiE '^[[:space:]]*(export[[:space:]]+)?(ANTHROPIC_BASE_URL|ANTHROPIC_AUTH_TOKEN|HTTPS?_PROXY|ALL_PROXY|NO_PROXY)[[:space:]]*=' $E"
+chk ".env 에 개발 전용 변수 없음"       sh -c "! sudo grep -qE '^[[:space:]]*(export[[:space:]]+)?(ALLOWED_ORIGINS|COOKIE_SECURE|ENABLE_API_DOCS)[[:space:]]*=' $E"
+```
+
+---
+
+### 16-8. 서버 침해가 의심될 때 (교체 순서)
+
+서버나 계정에 다른 사람이 들어왔다고 의심되면, 조사보다 먼저 아래 순서로 바꾼다. 각 단계가 끝날 때마다 다음으로 넘어간다.
+
+1. 앱 비밀번호 재설정 — 19-2 (모든 기기 로그아웃)
+2. 2차 인증 재설정 — 19-1 (새 인증 앱 등록, 새 복구 코드)
+3. `SESSION_SECRET` 교체 — 16-1 (남은 로그인 세션 모두 무효)
+4. `ANTHROPIC_API_KEY` 교체 — 16-2 (Console에서 옛 키 삭제, 사용량 확인)
+5. CI 배포 키 교체 — 16-3 (GitHub `production` 시크릿 포함)
+6. 백업 수신 키 교체 — 16-4
+7. DuckDNS 토큰 교체 — 16-6
+8. 서버 `authorized_keys`에 강제 명령 없는 줄이 없는지 14-2의 확인 블록으로 본다.
+9. age 키(16-5)는 개인키가 서버에 없으므로 서버 침해만으로는 바꿀 필요가 없다. Mac이나 키 파일 보관 장소가 의심되면 바꾼다.
+
+그다음 마스터에게 알려 서버를 새로 만들지("서버를 새로 만들 때") 함께 정한다. 그 경우 DB는 침해 이전 날짜의 암호화 백업(Mac, 월간 장기 보관본 포함)에서 15-3으로 옮긴다.
+
+## 17. 비밀값을 화면에 펼치지 않기
+
+### 17-1. 진단할 때 쓰지 않는 명령과 대신 쓰는 방법
+
+아래 명령은 `.env`의 값(세션 비밀값·API 키 등)이나 토큰을 화면에 그대로 출력한다. 터미널 기록·화면 공유·채팅에 남을 수 있으므로 **쓰지 않는다.** 실수로 출력했고 그 화면을 다른 곳에 붙였다면 16절로 그 값을 교체한다.
+
+| 쓰지 않는 명령 | 펼쳐지는 것 | 대신 |
+|---|---|---|
+| `docker inspect <컨테이너>` (형식 지정 없이), `docker container inspect` | `Config.Env`에 `.env` 전체 | 필요한 칸만: `docker inspect -f '{{.State.Health.Status}}' scrap-app-api-1`, `-f '{{.Config.Image}}'`, `-f '{{.State.OOMKilled}}'` |
+| `docker compose config` (옵션 없이) | `.env` 값이 치환된 전체 구성 | `docker compose config -q`(유효성만), `--services`, `--images` |
+| `docker compose exec api env`, `printenv`, `docker exec … env`, `cat /proc/<pid>/environ`, `ps e`·`ps eww` | 컨테이너·프로세스 환경변수 전체 | 이름이 있는지만: `sudo docker compose -f /opt/scrap-app/docker-compose.yml exec -T api python -c "import os; print('ANTHROPIC_API_KEY' in os.environ)"` |
+| `cat`·`less`·`head`·`nano`로 보기만 · `grep`(줄 출력) — `.env`, `duckdns/token` | 값 | 형식 판정 `chk` 줄 (16절), `grep -c`(개수), `stat`(권한) |
+| `docker compose run api env`, `bash -x`로 스크립트 실행 | 환경변수·도메인 | 스크립트의 ✅/❌·`실패:` 줄과 `logs/*.log` |
+
+- `.env`를 고칠 때만 편집기(`sudo -u deploy nano /opt/scrap-app/.env`)를 연다. 화면 공유·녹화 중에는 열지 않는다.
+- 로그(`docker compose logs`, `logs/*.log`)에는 앱과 스크립트가 비밀값을 쓰지 않는다. 도메인이 보이면 가리고 붙인다.
+- 판정 줄(✅/❌)은 값을 출력하지 않게 만들어져 있다. 새 확인 명령을 만들 때도 같은 원칙을 따른다.
+
+### 17-2. 이미지 빌드 규칙 (공개 이미지)
+
+GHCR 이미지는 공개다. 누구나 `docker history --no-trunc`, `docker inspect`로 빌드 단계와 환경변수를 볼 수 있다.
+
+- 비밀값을 `--build-arg`(워크플로의 `build-args`), Dockerfile `ARG`·`ENV`로 넣지 않는다. 앱 비밀값은 실행할 때 서버 `.env`로만 전달한다.
+- 빌드 인자는 공개값만 쓴다. 지금은 web 이미지의 `VITE_APP_BUILD_ID`(= 커밋 SHA) 하나뿐이다.
+- `VITE_`로 시작하는 값은 브라우저 번들에 그대로 들어간다. CI가 허용 목록(`ci.yml`의 `ALLOWED_VITE_VARS`) 밖의 이름을 막는다.
+- 이미지에 들어가는 파일은 `.dockerignore`(허용 목록)로 고른다. CI가 web 이미지 안의 `/srv`를 push 전에 꺼내 비밀값 형태를 검사한다 (`deploy/scan-dist.sh`).
+
+---
+
+## 18. AI 운영 (모델·한도·사용량)
+
+설정은 서버 `.env`에 있고, 바꾸면 `rollback.sh current`로 반영한다. 값의 형식이 틀리면 앱은 기본값을 쓴다.
+
+| 이름 | 기본 | 뜻 |
+|---|---|---|
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | 쓸 Claude 모델. 비용이 부담되면 더 가벼운 모델 이름으로 바꾼다 |
+| `AI_PER_MINUTE` | 10 | 분당 AI 요청 수 (채우기·검색 합산) |
+| `AI_PER_DAY` | 200 | 하루(한국 날짜) AI 요청 수 |
+| `AI_TOKENS_PER_DAY` | 1000000 | 하루 토큰 예산 (응답의 사용량 합계). 넘으면 그날은 AI가 "오늘 사용량을 모두 썼어요"로 응답 (앱 새 버전부터) |
+| `ANTHROPIC_FALLBACKS` | 켜짐 | 0이면 Claude가 안전상 답을 거부했을 때 다른 모델로 다시 처리하지 않는다 |
+
+**바꾸기:**
+
+```bash
+sudo -u deploy nano /opt/scrap-app/.env           # 예: 주석(#)을 지우고 AI_PER_DAY=100
+E=/opt/scrap-app/.env
+chk "AI 한도 값이 정수 (있는 줄만)" sh -c "! sudo grep -E '^(AI_PER_MINUTE|AI_PER_DAY|AI_TOKENS_PER_DAY)=' $E | grep -vqE '=[1-9][0-9]*$'"
+chk "모델 줄 형식 (있는 줄만)"      sh -c "! sudo grep -E '^ANTHROPIC_MODEL=' $E | grep -vqE '^ANTHROPIC_MODEL=[a-z0-9.-]+$'"
+sudo /opt/scrap-app/deploy/rollback.sh current
+```
+
+- 하루 한도에 닿으면 AI 요청은 429(`ai_daily_limit`)로 끝나고 다음 날(한국 자정) 풀린다. 다른 기능은 그대로 된다.
+- Anthropic Console의 월 지출 한도는 이 설정과 별개로 둔다 (16-2 6번). 앱 한도는 하루 단위, Console 한도는 달 단위 비용 상한이다.
+
+**사용량 보기:**
+
+```bash
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec -T api python -m app.admin ai-usage --days 14
+```
+
+날짜별 요청 수·토큰과 하루 상한이 표로 나온다 (비밀값 없음). `app.admin`이 없는 옛 이미지에서는 요청 수만 이렇게 본다:
+
+```bash
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec -T api python -c "
+import sqlite3
+c = sqlite3.connect('file:/data/scrap.db?mode=ro', uri=True)
+for row in c.execute('SELECT day, count FROM ai_usage_days ORDER BY day DESC LIMIT 14'): print(*row)"
+```
+
+비용(금액)은 Anthropic Console의 사용량·비용 화면에서 본다.
+
+---
+
+## 19. 관리 명령: 계정 복구 · 비밀번호 재설정 · 검색 색인
+
+서버에서 api 컨테이너 안의 관리 명령(`python -m app.admin`)을 쓴다. **앱 Phase 8 이후 이미지에만 있다** (옛 버전으로 롤백한 상태에서는 `No module named app.admin`).
+
+```bash
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec api python -m app.admin <명령>
+```
+
+- 화면에서 묻는 명령(`reset-2fa`, `set-password`)에는 **`-T`를 붙이지 않는다** (터미널이 아니면 거부하고 종료 코드 2). `docker compose exec`는 기본으로 터미널을 붙이므로 `-it`도 필요 없다.
+- 결과만 보는 명령(`fts-check`, `fts-rebuild`, `ai-usage`)은 `-T`를 붙여 스크립트에서도 쓴다.
+- **api 컨테이너가 멈춰 있을 때**(`exec`가 "not running"으로 실패): 운영 버전 이미지로 일회용 컨테이너를 띄워 같은 명령을 쓴다. 태그는 `state/current`에서 읽는다.
+  ```bash
+  A=/opt/scrap-app; SHA=$(sudo cat $A/state/current)
+  sudo IMAGE_TAG="$SHA" docker compose -f $A/docker-compose.yml run --rm --no-deps -T api python -m app.admin fts-check
+  sudo IMAGE_TAG="$SHA" docker compose -f $A/docker-compose.yml run --rm --no-deps api python -m app.admin reset-2fa   # 대화형: -T 없이 (run 은 기본으로 터미널을 붙인다)
+  ```
+  그 뒤 api를 다시 올리는 것은 12-6(`rollback.sh current`)으로 한다.
+- 종료 코드: 0 정상, 1 실패·이상·취소(아무것도 바꾸지 않음), 2 터미널 아님·설정·DB·사용법 오류, 130 Ctrl+C.
+- ⚠️ 바꾸는 명령(`reset-2fa`, `set-password`, `fts-rebuild`) 전에는 백업을 하나 만든다: `sudo -u deploy /opt/scrap-app/deploy/backup.sh` (13-3).
+- ⚠️ 화면에 나온 QR·수동 입력 키·복구 코드·새 비밀번호를 채팅·메모 앱·스크린샷에 남기지 않는다. 복구 코드는 비밀번호 관리자에만 옮긴다.
+
+### 19-1. 계정 복구 (인증 앱과 복구 코드를 모두 잃었을 때)
+
+```bash
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec api python -m app.admin reset-2fa
+# 밝은 배경 터미널이라 QR이 잘 안 읽히면: ... reset-2fa --light-background
+```
+
+1. `yes`로 확인한다.
+2. 터미널에 나온 QR을 인증 앱(Google Authenticator 등)으로 찍는다 (안 되면 함께 나온 수동 입력 키를 앱에 입력).
+3. 앱의 6자리 코드를 입력한다 (최대 3번).
+4. `✅` 줄과 **새 복구 코드 10개**가 한 번만 나온다 → 비밀번호 관리자에 옮긴다. 옛 복구 코드는 더 쓸 수 없다.
+5. 모든 기기가 로그아웃된다 → 새 인증 앱 코드로 다시 로그인한다.
+
+### 19-2. 비밀번호 재설정
+
+```bash
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec api python -m app.admin set-password
+```
+
+새 비밀번호를 두 번 입력한다 (10자 이상, 화면에 보이지 않는다). 끝나면 모든 기기가 로그아웃된다. 2차 인증은 그대로다.
+
+### 19-3. 검색 색인(FTS) 확인·재구성
+
+검색 결과가 이상하거나(있는 스크랩이 안 나옴), 복원 뒤(15-4)에 확인한다.
+
+```bash
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec -T api python -m app.admin fts-check
+```
+
+`✅ 검색 색인 정상: …` 또는 `❌ 검색 색인 이상: … → fts-rebuild 로 다시 만드세요` 한 줄이 나온다 (종료 코드 0/1). ❌면 백업 후 재구성:
+
+```bash
+sudo -u deploy /opt/scrap-app/deploy/backup.sh
+sudo docker compose -f /opt/scrap-app/docker-compose.yml exec -T api python -m app.admin fts-rebuild
+```
+
+재구성 뒤 `fts-check`와 같은 ✅/❌ 줄이 나온다. 재구성은 스크랩 내용으로 색인을 다시 만들 뿐 스크랩은 바꾸지 않는다. 다시 ❌면 그 줄을 마스터에게 알린다.
+
+---
+
+## 20. PWA가 새 버전으로 안 바뀔 때 (서비스워커 해제·강제 갱신)
+
+**평소:** 배포하면 앱이 "새 버전" 안내를 띄운다 → **새로고침**을 누르면 바뀐다. 앱은 열려 있는 동안 주기적으로, 그리고 새로 열 때 새 버전을 확인한다. 아이폰 홈 화면 앱은 앱 전환기에서 위로 밀어 완전히 닫았다가 다시 열면 확인이 빨라진다.
+
+**지금 운영 중인 빌드 확인:**
+
+```bash
+H='<이름>.duckdns.org'
+chk "사이트에 빌드 식별자 있음" sh -c "curl -s https://$H/ | grep -c 'name=\"app-build\"' | grep -qx 1"
+```
+
+앱의 설정 화면 맨 아래 **"앱 빌드"**가 배포한 커밋 SHA 앞 7자(Actions 실행·`state/current`의 앞 7자)와 같으면 새 버전이다.
+
+**안내가 계속 안 뜨거나, 화면이 깨졌을 때 — 그 기기에서만 해제:**
+
+- **아이폰 홈 화면 앱:** 홈 화면 앱은 Safari와 저장소가 따로라, **앱 아이콘을 삭제하면 그 앱의 서비스워커·캐시·로그인 쿠키가 함께 지워진다.**
+  1. 홈 화면에서 앱 아이콘 길게 누르기 → 앱 제거 → 홈 화면에서 제거(삭제).
+  2. Safari 쪽 데이터도 지운다: 설정 → 앱 → Safari → 고급 → 웹사이트 데이터 → `<이름>.duckdns.org` 검색 → 삭제 (iOS 18 이상 경로).
+  3. Safari로 사이트를 열어 로그인 → 공유 → **홈 화면에 추가**. 홈 화면 앱에서 다시 로그인한다 (2차 인증 코드 필요).
+- **PC Chrome:** 사이트를 연 채 개발자 도구(F12 / ⌥⌘I) → **Application** → Service workers → **Unregister** → Storage → **Clear site data** → 새로고침. 로그인 쿠키도 지워지므로 다시 로그인한다.
+- **PC Safari:** 설정 → 개인정보 보호 → 웹사이트 데이터 관리 → 도메인 검색 → 제거 → 새로고침 후 다시 로그인.
+
+**모든 기기에서 한꺼번에 해제해야 할 때(긴급):** 서버에서 할 일은 없다. 프론트를 서비스워커 자기 해제(`selfDestroying`) 설정으로 한 번 배포하는 PR을 마스터에게 요청한다. `/sw.js` 파일을 지우는 방식은 쓰지 않는다.
+
+---
+
+## 21. GHCR 옛 이미지 보존 정책, 정기 의존성 검사
+
+### 21-1. GHCR 옛 이미지 정리 (월 1회 자동)
+
+워크플로 `.github/workflows/ghcr-cleanup.yml`이 매월 3일에 `scrap-api`·`scrap-web` 패키지의 옛 버전을 지운다.
+
+| 남기는 것 | 이유 |
+|---|---|
+| 커밋 SHA 태그 버전 중 최근 30개 (패키지마다) | 최근 빌드로의 롤백(12-6 방법 A) |
+| production에 최근 배포된 SHA (최근 성공 배포 5개와 그 사이의 모든 배포 기록) | 서버의 현재·직전 버전(`state/current`·`previous`)은 반드시 이 안에 있다 → 지워지지 않는다 |
+| 태그 없는 버전, SHA가 아닌 태그가 붙은 버전 | 손대지 않는다 |
+
+- 이미지는 단일 매니페스트(`provenance: false`)라 빌드 1번 = 패키지 버전 1개다. 워크플로가 실행마다 이를 확인하고, 아니면 아무것도 지우지 않는다. production 성공 배포 기록을 2개 이상 찾지 못해도 지우지 않는다. 실제 삭제는 예약 실행이나 `dry_run`을 끈 수동 실행에서만 한다.
+- 지운 버전으로는 되돌릴 수 없다 → 그보다 오래된 상태가 필요하면 코드를 되돌리는 PR로 새로 빌드한다.
+- 공개 패키지라 누구나 받을 수 있는 옛 버전이 무한히 쌓이지 않게 하려는 정책이다.
+
+**처음 한 번 (GitHub 화면):**
+1. 프로필 → Packages → `scrap-api` → Package settings → **Manage Actions access**에서 저장소 `scrap`의 역할이 **Admin**인지 본다 (삭제에 필요). 아니면 Admin으로 바꾼다. `scrap-web`도 같게.
+   - 이 역할은 저장소 단위로 적용된다. Admin으로 바꾸면 이 저장소에서 `packages: write` 권한을 받는 모든 잡(이 정리 워크플로와 `deploy.yml`의 `build` 잡)이 패키지 버전 삭제까지 할 수 있게 된다.
+2. Actions → **GHCR cleanup** → Run workflow (`dry_run` 체크된 채) → 로그의 `삭제 대상:` 줄과 `남김 N개, 삭제 예정 M개`를 본다. 보호 SHA 줄에 지금 운영 중인 SHA 앞 7자(`sudo cat /opt/scrap-app/state/current | cut -c1-7`)가 있는지 확인한다.
+
+**확인 (PC, `gh` 로그인돼 있을 때):** 버전 수는 패키지 화면(Packages → `scrap-api` → 오른쪽 "versions")에서 본다 (30개 + 보호분).
+
+```bash
+R=injae-348/scrap
+chk "최근 GHCR cleanup 실행 성공" sh -c "gh run list -R $R -w 'GHCR cleanup' -L 1 --json conclusion --jq '.[0].conclusion' | grep -qx success"
+```
+
+실패하면 실행 로그의 `::error::` 줄을 마스터에게 알린다 (삭제 권한이면 위 1번).
+
+### 21-2. 정기 의존성 검사 (주 1회 자동)
+
+워크플로 `.github/workflows/audit.yml`(Dependency audit)이 매주 월요일 백엔드 `pip-audit`과 프론트 `npm audit`(런타임 + 빌드 도구 포함 전체, high 이상)을 돌린다. 시크릿·배포와 무관하다.
+
+- 실패하면 GitHub이 알림을 보낸다. 실패한 단계 이름과 로그의 패키지 이름·권고 ID를 마스터에게 알린다 → 의존성을 올리는 PR로 고친다. PR CI도 같은 검사(npm은 런타임만)로 막힌다.
+- 수동 실행: Actions → Dependency audit → Run workflow.
+- 저장소에 60일 동안 활동이 없으면 GitHub이 예약 워크플로를 끈다 → Actions 화면에서 다시 켠다 (GHCR cleanup도 같다).
+- 저장소 Settings → Code security → **Dependabot alerts / security updates**를 켜 두면 같은 정보를 PR로도 받는다.
+
+```bash
+R=injae-348/scrap
+chk "최근 Dependency audit 성공" sh -c "gh run list -R $R -w 'Dependency audit' -L 1 --json conclusion --jq '.[0].conclusion' | grep -qx success"
+```

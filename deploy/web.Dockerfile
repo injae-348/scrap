@@ -25,6 +25,12 @@ COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 
 COPY frontend/ ./
+# 빌드 식별자: 배포 때 커밋 SHA 를 넘긴다 (deploy.yml build-args). index.html·서비스워커에 들어가 PWA 갱신 안내에 쓰인다.
+# ⚠️ 빌드 인자는 공개값만 넘긴다 (비밀값 금지 — 공개 이미지·빌드 로그로 보일 수 있다. README 17-2).
+#    이 단계(build)는 최종 이미지에 남지 않고, 값은 공개된 커밋 SHA 뿐이다. ENV 로 만들지 않는다.
+# 넘기지 않으면(로컬·PR 빌드) 프론트가 빌드 시각으로 대신한다. 형식 검사는 프론트 빌드가 한다(영문·숫자·._-, 64자 이하).
+# npm ci 층 뒤에 두어 의존성 캐시가 SHA 마다 깨지지 않게 한다.
+ARG VITE_APP_BUILD_ID
 RUN npm run build
 
 # ── runtime: Caddy ─────────────────────────────────

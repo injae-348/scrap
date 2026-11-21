@@ -909,6 +909,7 @@ def test_per_day_limit_persists(make_client, clock: FakeClock, tmp_path, monkeyp
     fake.messages.script.clear()
     res = client.post("/api/ai/extract", json={"url": URL, "text": "본문"})
     assert res.status_code == 429
+    assert res.json()["error"]["code"] == "ai_daily_limit"  # v1.6
     # 다음 날(Asia/Seoul 자정)까지 남은 초.
     # FakeClock 은 17:00 에서 시작하고 do_setup 이 30초 넘긴다.
     assert int(res.headers["retry-after"]) == SECONDS_TO_MIDNIGHT - 30
@@ -1076,7 +1077,8 @@ def test_bidi_chars_removed_from_ai_output(ai: TestClient, fake: FakeAnthropic, 
     )
     data = ai.post("/api/ai/extract", json={"url": URL, "text": "본문"}).json()
     assert data["title"] == "제목"
-    assert data["memo"] == "[elpmaxe.doog//:sptth](https://evil.example)\n- 항목"
+    # 방향 문자를 지운 뒤 링크 정리(v1.6)까지: 링크는 글자 + 실제 호스트로 남는다.
+    assert data["memo"] == "elpmaxe.doog//:sptth (evil.example)\n- 항목"
     assert data["topic_suggestions"] == ["보안"]
 
     fake.add(
@@ -1222,3 +1224,28 @@ def test_fallbacks_can_be_disabled(make_client, clock, tmp_path) -> None:
 
     on = make_client(clock=clock, DB_PATH=str(tmp_path / "u.db"), ANTHROPIC_FALLBACKS="no")
     assert on.app.state.settings.anthropic_fallbacks is True  # 정확히 "0"일 때만 끈다
+
+
+# ── 메모 링크 정리 (v1.6, 규칙별 단위 테스트는 tests/test_memolinks.py) ──
+
+
+def test_extract_endpoint_cleans_memo_links(ai: TestClient, fake: FakeAnthropic) -> None:
+    fake.add(
+        json_reply(
+            extract_result(
+                title="[제목](https://t.test)",
+                memo="- [신청](https://apply.example.test/form)\n- ![](https://img.test/a.png)\n"
+                "- https://bare.example.test\n\n[r]: https://ref.test",
+            )
+        )
+    )
+    data = ai.post("/api/ai/extract", json={"url": URL, "text": "본문"}).json()
+    assert data["memo"] == "- 신청 (apply.example.test)\n- \n- https://bare.example.test"
+    assert data["title"] == "[제목](https://t.test)"  # 메모에만 적용한다
+
+
+def test_user_memo_is_not_cleaned(ai: TestClient) -> None:
+    memo = "[직접 쓴 링크](https://mine.test)"
+    res = ai.post("/api/scraps", json={"url": "https://ex.test/u", "memo": memo})
+    assert res.status_code == 201, res.text
+    assert ai.get(f"/api/scraps/{res.json()['id']}").json()["memo"] == memo

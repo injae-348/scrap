@@ -1,5 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { aiErrorMessage, ApiError, errorMessage, formatWait, isAborted, request, setUnauthorizedHandler } from './http'
+import {
+  aiErrorMessage,
+  ApiError,
+  errorMessage,
+  formatWait,
+  isAborted,
+  isAiDailyLimit,
+  request,
+  setUnauthorizedHandler,
+} from './http'
 
 function mockFetch(status: number, body: unknown, headers: Record<string, string> = {}) {
   const fn = vi.fn(async () =>
@@ -166,5 +175,41 @@ describe('AI 사용 한도 (503 ai_quota_exceeded)', () => {
     expect(aiErrorMessage(e, 'search')).toBe('이번 달 AI 사용 한도에 도달했어요.')
     expect(aiErrorMessage(e, 'extract')).toBe('이번 달 AI 사용 한도에 도달했어요.')
     expect(aiErrorMessage(e, 'search')).not.toContain('서버 설정')
+  })
+})
+
+describe('AI 하루 사용량 소진 (API.md v1.6: 429 ai_daily_limit)', () => {
+  const DAILY_MSG = '오늘 AI 사용량을 모두 썼어요. 내일 다시 시도해 주세요.'
+
+  async function fail429(code: string, message: string, retryAfter?: string) {
+    mockFetch(429, { error: { code, message } }, retryAfter ? { 'Retry-After': retryAfter } : {})
+    return (await request('POST', '/ai/search', {}).catch((x: unknown) => x)) as ApiError
+  }
+
+  it('ai_daily_limit은 Retry-After가 작아도 소진 (자정 직전)', async () => {
+    const e = await fail429('ai_daily_limit', DAILY_MSG, '30')
+    expect(e.retryAfter).toBe(30)
+    expect(isAiDailyLimit(e)).toBe(true)
+  })
+
+  it('ai_daily_limit은 Retry-After가 커도 소진', async () => {
+    expect(isAiDailyLimit(await fail429('ai_daily_limit', DAILY_MSG, '36000'))).toBe(true)
+  })
+
+  it('too_many_requests는 Retry-After가 커도 일반 429', async () => {
+    expect(isAiDailyLimit(await fail429('too_many_requests', 'AI 요청이 너무 많아요.', '36000'))).toBe(false)
+  })
+
+  it('다른 오류는 소진으로 보지 않는다', () => {
+    expect(isAiDailyLimit(new ApiError(503, 'ai_quota_exceeded', 'x', 3600))).toBe(false)
+    expect(isAiDailyLimit(new Error('x'))).toBe(false)
+    expect(isAiDailyLimit(null)).toBe(false)
+  })
+
+  it('문구는 서버 message 그대로 (남은 시간을 붙이지 않는다)', async () => {
+    const e = await fail429('ai_daily_limit', DAILY_MSG, '7200')
+    expect(aiErrorMessage(e, 'search')).toBe(DAILY_MSG)
+    expect(aiErrorMessage(e, 'extract')).toBe(DAILY_MSG)
+    expect(errorMessage(e)).toBe(DAILY_MSG)
   })
 })

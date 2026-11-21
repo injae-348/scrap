@@ -53,6 +53,14 @@
 		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; manifest-src 'self'; worker-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
 		# 클립보드 읽기("링크 붙여넣기")는 막지 않는다.
 		Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+		# COOP: 다른 사이트가 이 앱을 window.open 등으로 열어도 두 창이 서로의 window 참조를 갖지 못하게 분리한다.
+		#   이 앱은 팝업·OAuth 창을 쓰지 않고, 외부 링크는 이미 noopener 로 연다 → 동작 변화 없음.
+		Cross-Origin-Opener-Policy "same-origin"
+		# CORP: 이 사이트의 응답(API JSON, 자산)을 다른 출처의 페이지가 <img>·<script> 등(no-cors)으로 끌어다 쓰지 못하게 한다.
+		#   영향 확인: 같은 출처 요청에는 적용되지 않는다. PWA manifest(/manifest.webmanifest)·아이콘(/pwa-*.png,
+		#   /apple-touch-icon-*.png, /favicon.svg)·서비스워커(/sw.js, /workbox-*.js)·/assets/* 는 모두 같은 출처 문서가
+		#   같은 출처 경로로 불러오고, 홈 화면 아이콘은 브라우저 자체가 가져간다. 다른 출처에서 불러오는 자원도 없다(CSP 'self').
+		Cross-Origin-Resource-Policy "same-origin"
 		# 서버 종류(Caddy/uvicorn)를 알리지 않는다.
 		-Server
 	}

@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router'
 import { aiApi, metaApi } from '../api'
-import { errorMessage, formatWait, isApiError } from '../api/http'
+import { errorMessage, formatWait, isAiDailyLimit, isApiError } from '../api/http'
 import type { AiExtractResponse, Scrap, Source, Topic } from '../api/types'
 import { AiErrorNotice, AiProgress } from '../components/AiStatus'
 import { IconClipboard, IconSparkles } from '../components/Icons'
@@ -220,6 +220,8 @@ function ScrapForm({
   const extract = useAbortableTask()
   const extractError = extract.state.status === 'error' ? extract.state.error : null
   const aiWait = useRetryCountdown(extractError)
+  /** 하루 사용량 소진(429 ai_daily_limit): 버튼은 Retry-After(다음 날 0시)까지 막고 남은 시간 대신 소진 표시 */
+  const aiDailyLimit = isAiDailyLimit(extractError)
 
   const dirty =
     url.trim() !== init.url ||
@@ -612,7 +614,9 @@ function ScrapForm({
               {aiPending
                 ? 'AI가 읽는 중…'
                 : aiWait > 0
-                  ? `AI로 채우기 (${formatWait(aiWait)} 뒤)`
+                  ? aiDailyLimit
+                    ? 'AI로 채우기 (오늘 사용량 소진)'
+                    : `AI로 채우기 (${formatWait(aiWait)} 뒤)`
                   : aiQuotaHit
                     ? 'AI로 채우기 (한도 도달)'
                     : 'AI로 채우기'}
