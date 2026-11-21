@@ -87,6 +87,9 @@ fi
 for cmd in docker flock age gzip timeout tee; do
   command -v "$cmd" >/dev/null || die "명령 없음: ${cmd} (age 는 README 13-2)"
 done
+# 작업 디렉터리를 앱 폴더로 옮긴다 (deploy.sh 와 같음). 사람이 `sudo -u deploy` 로 실행하면
+# 현재 디렉터리가 deploy 가 읽을 수 없는 곳(실행한 사람의 홈)이라 docker compose 가 실패한다.
+cd "$APP_DIR" || die "앱 디렉터리로 이동할 수 없음: ${APP_DIR}"
 [[ -r $COMPOSE_FILE ]] || die "compose 파일을 읽을 수 없음: ${COMPOSE_FILE}"
 [[ -r $ENV_FILE ]] || die ".env 를 읽을 수 없음: ${ENV_FILE}"
 [[ -f $RECIPIENTS && -r $RECIPIENTS ]] || die "수신자(공개키) 파일이 없음: ${RECIPIENTS} (README 13-2)"
@@ -127,7 +130,10 @@ dc() {
   docker compose --project-directory "$APP_DIR" -f "$COMPOSE_FILE" "$@"
 }
 
-if [[ -n "$(dc ps --status running --quiet api 2>/dev/null)" ]]; then
+# compose 자체가 실패하면(권한·설정 오류) run 모드로 넘어가지 않고 원인을 그대로 알린다.
+running_api="$(dc ps --status running --quiet api 2>/dev/null)" \
+  || die "docker compose 를 실행하지 못함 — deploy 사용자의 docker 권한·compose 파일 확인 (README 11-2)"
+if [[ -n $running_api ]]; then
   mode="exec"
 elif [[ -n $CUR_SHA ]]; then
   mode="run"
