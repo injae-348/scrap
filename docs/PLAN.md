@@ -126,14 +126,16 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] 운영 배포 (2026-11-21 PR #11 병합 → 승인 → 배포 성공, 외부 health·PWA 파일 헤더 확인, 최초 가입 완료, 아이폰 홈 화면 앱 확인)
 
 ### Phase 7. AI 기능
-- [ ] AI로 채우기 (본문 추출 → Claude 구조화 출력 → 제안 표시)
-- [ ] AI 검색 (도구 호출 루프, 결과 카드)
-- [ ] (Phase 4에서 넘김) 본문 추출은 http/https 스킴만 허용
-- [ ] (Phase 6에서 넘김) `/ai/*` 404를 "준비 중"으로 바꾸는 프론트 처리 제거, AI 오류 코드 정리, `/ai/search` 결과의 `scrap` 형식(전문 또는 `ScrapListItem`) 결정
-- [ ] (Phase 6에서 넘김) 메모 속 외부 링크 옆에 실제 호스트 표시 (AI가 제안한 메모 대비)
-- [ ] (Phase 5에서 넘김, 착수 조건) 본문 추출은 제목 미리보기의 안전한 가져오기 구현을 공통 모듈로 분리해 재사용 (다른 HTTP 클라이언트 사용 금지), HTML 파싱 입력 크기 상한과 파싱 전용 동시 실행 제한
-- [ ] `/ai/*` 전용 요청 제한: 공통 제한보다 낮은 분당 상한과 하루 호출 상한 (넘으면 429 `too_many_requests`)
-- [ ] `ANTHROPIC_API_KEY` 설정 검사: 없거나 `.env.example` 자리표시자 그대로면 앱은 정상 기동하고 AI 기능만 "사용 불가"로 응답. 키 값은 설정 객체 출력·로그·오류 응답에 넣지 않는다
+> 결정 사항 (2026-11-21): 세부 규칙은 `docs/API.md` v1.5 "AI 세부 규칙". 기본 모델 `claude-opus-5-5`(`ANTHROPIC_MODEL`로 변경), AI 요청은 분당 10·하루 200·동시 2, 외부 페이지 가져오기는 미리보기와 합산 분당 20. AI 검색 결과는 `ScrapListItem`. 키 미설정은 503 `ai_unavailable`, Claude API 사용 한도 도달은 503 `ai_quota_exceeded`(설정 문제와 구분), 그 밖의 실패는 502 `ai_failed`. 처리 시간 상한 채우기 60초·검색 90초. 유튜브는 본문을 가져오지 않고 제목만. 운영 키는 이 앱 전용 키 + Console 월 지출 한도. 리뷰: `docs/reviews/qa-7-20261121.md` (보안 리뷰는 로컬 전용).
+- [x] AI로 채우기 (본문 추출 → Claude 구조화 출력 → 제안 표시)
+- [x] AI 검색 (도구 호출 루프, 결과 카드)
+- [x] (Phase 4에서 넘김) 본문 추출은 http/https 스킴만 허용
+- [x] (Phase 6에서 넘김) `/ai/*` 404를 "준비 중"으로 바꾸는 프론트 처리 제거, AI 오류 코드 정리, `/ai/search` 결과의 `scrap` 형식(전문 또는 `ScrapListItem`) 결정
+- [x] (Phase 6에서 넘김) 메모 속 외부 링크 옆에 실제 호스트 표시 (AI가 제안한 메모 대비)
+- [x] (Phase 5에서 넘김, 착수 조건) 본문 추출은 제목 미리보기의 안전한 가져오기 구현을 공통 모듈로 분리해 재사용 (다른 HTTP 클라이언트 사용 금지), HTML 파싱 입력 크기 상한과 파싱 전용 동시 실행 제한
+- [x] `/ai/*` 전용 요청 제한: 공통 제한보다 낮은 분당 상한과 하루 호출 상한 (넘으면 429 `too_many_requests`)
+- [x] `ANTHROPIC_API_KEY` 설정 검사: 없거나 `.env.example` 자리표시자 그대로면 앱은 정상 기동하고 AI 기능만 "사용 불가"로 응답. 키 값은 설정 객체 출력·로그·오류 응답에 넣지 않는다
+- [x] 운영 배포 (2026-11-21 PR #13 병합 → 승인 → 배포 성공, 서버 `.env`에 키 추가·반영 확인, 실제 키로 AI로 채우기·AI 검색 확인)
 
 ### Phase 8. 운영
 - [ ] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업
@@ -146,6 +148,9 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] (Phase 5에서 넘김) 다음 compose 갱신 때: 컨테이너 로그 크기 상한, api 기동 명령에 `--loop=uvloop --http=httptools` 명시
 - [ ] (Phase 6에서 넘김) PWA 갱신: 배포마다 index.html에 빌드 식별자를 넣어 갱신 안내가 항상 뜨게 하기, 서비스워커 해제 절차를 운영 문서에 두기, (선택) 최소 프론트 버전 확인
 - [ ] (Phase 6에서 넘김) CI 보강: 프론트 의존성 취약점 검사(npm audit), 빌드 결과물 비밀값 검사를 이미지 빌드 단계에서도 실행, `VITE_` 변수 허용 목록 검사, (선택) COOP·CORP 헤더
+- [ ] (Phase 7에서 넘김) 운영 문서: `ANTHROPIC_API_KEY` 교체 절차(비밀값 교체에 포함), Console 월 지출 한도 확인, 모델·AI 요청 한도 조정 방법, `ai_usage_days`로 사용량 보는 법
+- [ ] (Phase 7에서 넘김) AI 하루 토큰 예산(응답의 사용량 기준), AI 메모 제안 속 링크를 서버에서도 정리
+- [ ] (Phase 7에서 넘김) 배포 후 api 컨테이너 메모리 사용량 확인 (AI 라이브러리 추가분), 프론트 의존성 경고(Dependabot) 정리
 - [ ] (Phase 5에서 넘김) 접근 로그에서 쿼리 문자열(검색어·커서) 빼기, pip-audit 정기 실행(예: 주 1회 예약 워크플로), `scraps_fts` 무결성 확인·재구성 절차 문서화
 
 ## 도메인 (DuckDNS)
