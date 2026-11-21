@@ -8,6 +8,8 @@ export class ApiError extends Error {
   code: string
   /** 429 응답의 Retry-After(초). 없으면 null */
   retryAfter: number | null
+  /** 다시 시도할 수 있는 시각(ms, 응답을 받은 시점 + Retry-After). 없으면 null */
+  retryAt: number | null
 
   constructor(status: number, code: string, message: string, retryAfter: number | null = null) {
     super(message)
@@ -15,6 +17,7 @@ export class ApiError extends Error {
     this.status = status
     this.code = code
     this.retryAfter = retryAfter
+    this.retryAt = retryAfter === null ? null : Date.now() + retryAfter * 1000
   }
 }
 

@@ -5,11 +5,11 @@ import { Link } from 'react-router'
 import { request } from '../api/http'
 import { LeaveDialog } from '../components/ui'
 import { useLeaveGuard } from '../hooks/useLeaveGuard'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AppLayout } from '../components/AppLayout'
-import { createQueryClient, keys, useSources } from '../hooks/queries'
+import { createQueryClient, keys, useSignedOut, useSources } from '../hooks/queries'
 import { LoginPage } from './LoginPage'
 import { SetupPage } from './SetupPage'
 
@@ -114,6 +114,41 @@ describe('세션 만료 뒤 데이터 정리', () => {
     fireEvent.click(screen.getByRole('link', { name: '목록으로' }))
     fireEvent.click(await screen.findByRole('button', { name: '나가기' }))
     await waitFor(() => expect(r.state.location.pathname).toBe('/login'))
+  })
+})
+
+describe('만료 표시 유지', () => {
+  it('"계속 작성" 뒤 상태를 다시 확인해 logged_in:false가 와도 편집 화면을 남긴다', async () => {
+    let loggedIn = true
+    stubApi((_m, p) =>
+      p === '/auth/status' ? { status: 200, body: { setup_required: false, logged_in: loggedIn } } : unauthorized,
+    )
+    const qc = createQueryClient()
+    const r = renderAt('/scraps/new', qc)
+    fireEvent.click(await screen.findByRole('button', { name: '계속 작성' }))
+    loggedIn = false
+    await qc.invalidateQueries({ queryKey: keys.authStatus })
+    await waitFor(() => expect(qc.getQueryData(keys.authStatus)).toMatchObject({ logged_in: false, expired: true }))
+    expect(r.state.location.pathname).toBe('/scraps/new')
+    expect((screen.getByLabelText('메모') as HTMLTextAreaElement).value).toBe('작성 중인 메모')
+  })
+})
+
+describe('로그아웃 처리', () => {
+  it('진행 중이던 상태 확인 응답이 늦게 와도 로그아웃 상태를 덮어쓰지 않는다', async () => {
+    const qc = createQueryClient()
+    qc.setQueryData(keys.authStatus, { setup_required: false, logged_in: true })
+    let resolveLate: (v: unknown) => void = () => {}
+    const late = qc
+      .fetchQuery({ queryKey: keys.authStatus, queryFn: () => new Promise((r) => (resolveLate = r)), staleTime: 0 })
+      .catch(() => {})
+    const { result } = renderHook(() => useSignedOut(), {
+      wrapper: ({ children }) => <QueryClientProvider client={qc}>{children}</QueryClientProvider>,
+    })
+    await act(() => result.current())
+    resolveLate({ setup_required: false, logged_in: true })
+    await late
+    expect(qc.getQueryData(keys.authStatus)).toEqual({ setup_required: false, logged_in: false })
   })
 })
 

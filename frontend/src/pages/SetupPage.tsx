@@ -62,6 +62,7 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
   const [totpInfo, setTotpInfo] = useState<TotpSetupInfo | null>(null)
   const [recoveryCodes, setRecoveryCodes] = useState<string[] | null>(null)
   const setupWait = useRetryCountdown(setup.error)
+  const verifyWait = useRetryCountdown(verify.error)
   const step = recoveryCodes ? 2 : totpInfo ? 1 : 0
 
   // 페이지를 떠나면(뒤로·앞으로 캐시에 들어갈 때 포함) 화면에 들고 있던 비밀값·복구 코드를 지운다
@@ -93,7 +94,7 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
   }
 
   const submitVerify = (c: string) => {
-    if (c.length !== 6 || verify.isPending) return
+    if (c.length !== 6 || verify.isPending || verifyWait > 0) return
     verify.mutate(
       { code: c },
       {
@@ -281,7 +282,13 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
             10분 안에 확인을 마쳐 주세요. 새로고침하거나 화면을 나가면 처음부터 다시 해야 하고, 그때는 새 QR을 다시 등록해야
             해요.
           </p>
-          <Button type="submit" variant="primary" className="w-full" loading={verify.isPending} disabled={code.length !== 6}>
+          <Button
+            type="submit"
+            variant="primary"
+            className="w-full"
+            loading={verify.isPending}
+            disabled={code.length !== 6 || verifyWait > 0}
+          >
             확인
           </Button>
         </form>
@@ -293,15 +300,18 @@ function SetupFlow({ onStart }: { onStart: () => void }) {
 
       <LeaveDialog
         open={blocker.state === 'blocked'}
-        title={step === 2 ? '복구 코드를 보관했나요?' : '가입을 그만둘까요?'}
+        title={verify.isPending ? '코드를 확인하는 중이에요' : step === 2 ? '복구 코드를 보관했나요?' : '가입을 그만둘까요?'}
         message={
-          step === 2
+          verify.isPending
+            ? '확인이 끝나면 새 복구 코드가 한 번만 표시돼요. 끝날 때까지 이 화면에 머물러 주세요.'
+            : step === 2
             ? '이 화면을 나가면 복구 코드를 다시 볼 수 없어요.'
             : '나가면 처음부터 다시 해야 하고, 인증 앱에 등록한 항목은 쓸 수 없게 돼요.'
         }
         stayLabel="머무르기"
         onStay={() => blocker.reset?.()}
-        onLeave={() => blocker.proceed?.()}
+        // 확인 요청이 진행 중이면 나가지 못하게 한다 (끝나면 복구 코드 단계로 넘어간다)
+        onLeave={verify.isPending ? undefined : () => blocker.proceed?.()}
       />
     </AuthShell>
   )

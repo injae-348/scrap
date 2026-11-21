@@ -75,6 +75,17 @@ describe('parseDomainPatterns', () => {
   it('주소를 붙여넣으면 호스트만 쓴다', () => {
     expect(parseDomainPatterns('https://m.example.org/path?x=1').patterns).toEqual(['m.example.org'])
   })
+  it('주소의 쿼리에 있는 쉼표로 나누지 않는다', () => {
+    expect(parseDomainPatterns('https://www.example.com/watch?v=1,2,3, other.example.org')).toEqual({
+      patterns: ['www.example.com', 'other.example.org'],
+      invalid: [],
+    })
+    expect(parseDomainPatterns('https://a.example.com,https://b.example.com/x?q=1,2').patterns).toEqual([
+      'a.example.com',
+      'b.example.com',
+    ])
+    expect(parseDomainPatterns('https://a.example.com,b.example.com').patterns).toEqual(['a.example.com', 'b.example.com'])
+  })
   it('호스트가 아닌 값은 invalid', () => {
     expect(parseDomainPatterns('example.com/path, exa_mple.com, ftp://x.com').invalid).toEqual([
       'example.com/path',

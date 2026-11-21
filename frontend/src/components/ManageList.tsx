@@ -8,6 +8,8 @@ import { displayText } from '../lib/text'
 export interface ManageItem {
   id: number
   name: string
+  /** 이름 수정 칸의 처음 값. 없으면 name (주제는 표시용 '#'을 뺀 값을 넘긴다) */
+  editName?: string
   /** 이름 아래 보조 정보 (출처의 도메인 등) */
   detail?: string
   /** 편집 시 추가 입력값 (출처 도메인 패턴). undefined면 추가 입력칸을 보이지 않는다 */
@@ -262,7 +264,7 @@ function EditRow({
   onCancel: () => void
   onSave: (name: string, extra: string | undefined) => Promise<void>
 }) {
-  const [name, setName] = useState(item.name.replace(/^#/, ''))
+  const [name, setName] = useState(item.editName ?? item.name)
   const [extra, setExtra] = useState(item.extra ?? '')
   const [errors, setErrors] = useState<FieldErrors>({})
   const [busy, setBusy] = useState(false)

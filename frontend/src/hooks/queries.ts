@@ -74,7 +74,19 @@ export function clearPrivateCache(qc: QueryClient) {
 }
 
 export function useAuthStatus() {
-  return useQuery<ClientAuthStatus>({ queryKey: keys.authStatus, queryFn: authApi.status, staleTime: 60_000 })
+  const qc = useQueryClient()
+  return useQuery<ClientAuthStatus>({
+    queryKey: keys.authStatus,
+    queryFn: async () => {
+      const s = await authApi.status()
+      // 사용 중 만료된 상태에서 다시 확인해도 여전히 로그아웃이면 만료 표시를 유지한다
+      // (남겨 둔 편집 화면이 일반 로그아웃 처리로 바로 사라지지 않게)
+      const prev = qc.getQueryData<ClientAuthStatus>(keys.authStatus)
+      if (prev?.expired && !s.logged_in && !s.setup_required) return { ...s, expired: true, expiredSeq: prev.expiredSeq }
+      return s
+    },
+    staleTime: 60_000,
+  })
 }
 
 /**
@@ -165,7 +177,8 @@ export function useToggleLike() {
     },
     onSuccess: (res, s) => {
       patch(s.id, res.liked)
-      // 좋아요 보기 목록은 항목이 들어오고 빠지므로 다시 받는다
+      // 목록을 모두 오래된 것으로 표시한다. 지금 보이지 않는 목록(좋아요 보기 등)은 바로 다시 받고,
+      // 보고 있는 목록은 위에서 바꾼 값을 그대로 두었다가 다음에 다시 받을 때 맞춘다
       void qc.invalidateQueries({ queryKey: keys.scrapLists, refetchType: 'inactive' })
     },
   })
@@ -215,10 +228,14 @@ export function useDeleteSession() {
   return useInvalidating((id: number) => authApi.deleteSession(id), [keys.sessions])
 }
 
-/** 로그아웃 뒤: 개인 캐시를 비우고 로그인 필요 상태로 둔다 (화면 이동은 호출한 쪽) */
-function useSignedOut() {
+/**
+ * 로그아웃 뒤: 개인 캐시를 비우고 로그인 필요 상태로 둔다 (화면 이동은 호출한 쪽).
+ * 진행 중인 상태 확인 요청은 먼저 취소한다 (로그아웃 전에 보낸 요청의 응답이 나중에 덮어쓰지 않게).
+ */
+export function useSignedOut() {
   const qc = useQueryClient()
-  return () => {
+  return async () => {
+    await qc.cancelQueries({ queryKey: keys.authStatus })
     clearPrivateCache(qc)
     qc.setQueryData<ClientAuthStatus>(keys.authStatus, { setup_required: false, logged_in: false })
   }
@@ -231,7 +248,7 @@ export function useLogout() {
     mutationFn: authApi.logout,
     onSuccess: () => {
       setFlash('로그아웃했어요.')
-      signedOut()
+      return signedOut()
     },
   })
 }
@@ -243,7 +260,7 @@ export function useLogoutAll() {
     mutationFn: authApi.logoutAll,
     onSuccess: () => {
       setFlash('모든 기기에서 로그아웃했어요. 다시 로그인해 주세요.')
-      signedOut()
+      return signedOut()
     },
   })
 }

@@ -1,4 +1,4 @@
-import { useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
 import { cx } from '../lib/styles'
 import { IconAlert, IconInbox } from './Icons'
 
@@ -210,9 +210,21 @@ export function Badge({ tone, children }: { tone: 'warn' | 'danger' | 'muted' | 
   )
 }
 
-/** 작성 중 이탈 확인 (useLeaveGuard의 blocker와 함께 쓴다) */
-export function LeaveDialog({
-  open,
+/** 작성 중 이탈 확인 (useLeaveGuard의 blocker와 함께 쓴다). onLeave가 없으면 "나가기" 버튼을 숨긴다 */
+export function LeaveDialog(props: {
+  open: boolean
+  title?: string
+  message?: ReactNode
+  stayLabel?: string
+  leaveLabel?: string
+  onStay: () => void
+  onLeave?: () => void
+}) {
+  if (!props.open) return null
+  return <LeaveDialogBody {...props} />
+}
+
+function LeaveDialogBody({
   title = '작성 중인 내용이 있어요',
   message = '이 화면을 나가면 저장하지 않은 내용이 사라져요.',
   stayLabel = '계속 작성',
@@ -220,27 +232,56 @@ export function LeaveDialog({
   onStay,
   onLeave,
 }: {
-  open: boolean
   title?: string
   message?: ReactNode
   stayLabel?: string
   leaveLabel?: string
   onStay: () => void
-  onLeave: () => void
+  onLeave?: () => void
 }) {
-  if (!open) return null
+  const ref = useRef<HTMLDivElement>(null)
+
+  // 열려 있는 동안 포커스를 대화상자 안에 두고, 닫히면 열기 전 위치로 돌려준다
+  // (autoFocus가 포커스를 옮기기 전에 기억해야 하므로 처음 렌더 때 읽는다)
+  const [prevFocus] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null))
+  useEffect(() => {
+    const node = ref.current
+    return () => {
+      // 실제로 닫혀 화면에서 빠졌을 때만 돌려준다 (개발 모드의 effect 재실행에서는 그대로 둔다)
+      if (!node?.isConnected && prevFocus?.isConnected) prevFocus.focus()
+    }
+  }, [prevFocus])
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onStay()
+      return
+    }
+    if (e.key !== 'Tab') return
+    const items = ref.current ? [...ref.current.querySelectorAll<HTMLElement>('button:not([disabled])')] : []
+    if (!items.length) return
+    const first = items[0]
+    const last = items[items.length - 1]
+    const active = document.activeElement
+    if (e.shiftKey && (active === first || !ref.current?.contains(active))) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && (active === last || !ref.current?.contains(active))) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
   return (
-    <div
-      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 px-safe-4 pb-safe sm:items-center"
-      onKeyDown={(e) => {
-        if (e.key === 'Escape') onStay()
-      }}
-    >
+    <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 px-safe-4 pb-safe sm:items-center">
       <div
+        ref={ref}
         role="alertdialog"
         aria-modal="true"
         aria-labelledby="leave-title"
         aria-describedby="leave-desc"
+        onKeyDown={onKeyDown}
         className="mb-4 w-full max-w-sm space-y-4 rounded-2xl border border-line bg-bg p-5 shadow-xl sm:mb-0"
       >
         <div className="space-y-1.5">
@@ -252,9 +293,11 @@ export function LeaveDialog({
           </p>
         </div>
         <div className="flex justify-end gap-2">
-          <Button variant="ghost" className="text-danger" onClick={onLeave}>
-            {leaveLabel}
-          </Button>
+          {onLeave && (
+            <Button variant="ghost" className="text-danger" onClick={onLeave}>
+              {leaveLabel}
+            </Button>
+          )}
           <Button variant="primary" autoFocus onClick={onStay}>
             {stayLabel}
           </Button>

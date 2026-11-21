@@ -12,11 +12,12 @@ React + Vite + TypeScript, Tailwind CSS, TanStack Query, vite-plugin-pwa. API �
 3. 브라우저에서 `http://localhost:5173`을 연다 (`127.0.0.1:5173`으로 열면 허용 출처가 달라 쓰기 요청이 403 `origin_mismatch`).
    사용자가 없으면 가입 화면이 나온다. 가입 토큰은 백엔드를 띄울 때 정한 값이다.
 
-## 검사 (CI와 동일)
+## 검사
+CI `frontend` 잡이 같은 순서로 실행한다. CI는 빌드 뒤 `dist/`에 비밀값 형태가 없는지도 검사한다 (`.github/workflows/ci.yml`의 "Scan build output for secrets", CI 전용 단계).
 ```sh
-npm run lint
+npm run lint       # ESLint (렌더링 안전·브라우저 저장소 금지 규칙 포함)
 npm run typecheck
-npm test           # vitest (jsdom): 마크다운 렌더링 안전, URL 표시, API 오류 처리, 소스 검사
+npm test           # vitest (jsdom): 마크다운 렌더링 안전, URL 표시, API 오류 처리, 화면 동작, 소스 검사
 npm run build      # dist/ + 서비스워커(sw.js) + manifest
 ```
 

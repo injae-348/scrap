@@ -68,6 +68,31 @@ export function extractUrl(text: string): string | null {
   return m ? m[0] : null
 }
 
+const SCHEME_RE = /^[a-z][a-z0-9+.-]*:\/\//i
+/** 주소 뒤에 경로·쿼리·해시가 시작됐는지 (그 뒤의 쉼표는 주소의 일부로 본다) */
+const URL_WITH_PATH_RE = /^[a-z][a-z0-9+.-]*:\/\/[^/?#]*[/?#]/i
+
+/**
+ * 공백·쉼표로 항목을 나누되, 주소(https://…)의 경로·쿼리 안에 있는 쉼표는 나누지 않는다.
+ * 예: "https://example.com/?a=1,2, other.com" → ["https://example.com/?a=1,2", "other.com"]
+ */
+function splitPatternInput(input: string): string[] {
+  const items: string[] = []
+  for (const token of input.split(/\s+/)) {
+    let cur: string | null = null
+    for (const seg of token.split(',')) {
+      if (cur !== null && seg && !SCHEME_RE.test(seg) && URL_WITH_PATH_RE.test(cur)) {
+        cur += ',' + seg
+        continue
+      }
+      if (cur !== null) items.push(cur)
+      cur = seg
+    }
+    if (cur !== null) items.push(cur)
+  }
+  return items
+}
+
 /**
  * 출처 도메인 패턴 입력을 호스트 이름으로 정리한다.
  * "https://www.example.com/path" 처럼 주소를 붙여넣어도 호스트만 남긴다.
@@ -76,7 +101,7 @@ export function extractUrl(text: string): string | null {
 export function parseDomainPatterns(input: string): { patterns: string[]; invalid: string[] } {
   const patterns: string[] = []
   const invalid: string[] = []
-  for (const raw of input.split(/[,\s]+/)) {
+  for (const raw of splitPatternInput(input)) {
     const t = raw.trim().toLowerCase()
     if (!t) continue
     let host = t

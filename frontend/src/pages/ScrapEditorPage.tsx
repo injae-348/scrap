@@ -66,8 +66,9 @@ export function ScrapEditorPage() {
         )}
       </>
     )
+  // 출처·주제를 한 번도 받지 못했을 때만 오류 화면. 받아 둔 목록이 있으면 폼(작성 중인 내용)을 유지하고 위에 알린다
   const err = sources.error || topics.error
-  if (err)
+  if (!sources.data || !topics.data)
     return (
       <>
         {header}
@@ -84,6 +85,21 @@ export function ScrapEditorPage() {
   return (
     <>
       {header}
+      {err && (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 border-b border-line bg-warn-soft px-4 py-1.5 text-sm lg:px-8">
+          <span className="min-w-0 flex-1">출처·주제 목록을 새로 불러오지 못했어요. {errorMessage(err)}</span>
+          <button
+            type="button"
+            className="min-h-11 font-medium text-accent underline"
+            onClick={() => {
+              void sources.refetch()
+              void topics.refetch()
+            }}
+          >
+            다시 시도
+          </button>
+        </div>
+      )}
       {isEdit && scrap.isError && (
         <div role="alert" className="border-b border-line bg-warn-soft px-4 py-2 text-sm lg:px-8">
           최신 내용을 불러오지 못해 이전에 받은 내용으로 열었어요. {errorMessage(scrap.error)}
@@ -92,7 +108,7 @@ export function ScrapEditorPage() {
       <ScrapForm
         key={isEdit ? `edit-${id}` : 'new'}
         initial={isEdit ? scrap.data : undefined}
-        topics={topics.data ?? []}
+        topics={topics.data}
         ctx={ctx}
         backTo={backTo}
       />
@@ -136,7 +152,7 @@ type PreviewState =
   | { status: 'error'; url: string; error: unknown }
 
 function ScrapForm({
-  initial,
+  initial: initialProp,
   topics,
   ctx,
   backTo,
@@ -152,6 +168,9 @@ function ScrapForm({
   const save = useSaveScrap()
   const urlRef = useRef<HTMLInputElement>(null)
 
+  // 폼을 연 순간의 스크랩 하나를 기준으로 삼는다 (초기값·변경 감지·PATCH 비교 모두).
+  // 그 뒤 다시 받아 온 값(다른 기기의 변경)으로 기준이 바뀌면 손대지 않은 칸까지 덮어쓰게 된다.
+  const [initial] = useState(initialProp)
   const init = {
     url: initial?.url ?? '',
     title: initial?.title ?? '',
@@ -342,9 +361,15 @@ function ScrapForm({
 
   // ------------------------------------------------ 고른 주제·출처 정리
   const [selectionNotice, setSelectionNotice] = useState<string | null>(null)
-  /** 지금 목록 기준으로 선택을 맞추고, 바뀐 것이 있으면 화면 상태와 안내를 갱신한다 */
+  // 비동기 작업(목록 다시 받기)이 끝난 시점의 최신 선택을 읽기 위해 ref로도 들고 있는다
+  const selRef = useRef({ sourceId, topicIds })
+  useEffect(() => {
+    selRef.current = { sourceId, topicIds }
+  }, [sourceId, topicIds])
+  /** 지금 목록 기준으로 (그 시점의 최신) 선택을 맞추고, 바뀐 것이 있으면 화면 상태와 안내를 갱신한다 */
   const applySelectionFix = (curTopics: Topic[], curSources: Source[]) => {
-    const fix = reconcileSelection({ sourceId, topicIds }, { topics: curTopics, sources: curSources }, initial ? 'edit' : 'create')
+    const sel = selRef.current
+    const fix = reconcileSelection(sel, { topics: curTopics, sources: curSources }, initial ? 'edit' : 'create')
     const msg = selectionFixMessage(fix, curSources.find((x) => x.is_default)?.name)
     if (msg) {
       setTopicIds(fix.topicIds)

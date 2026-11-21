@@ -7,7 +7,7 @@ import { IconPlus } from './Icons'
 import { Sidebar } from './Sidebar'
 import { Toaster } from './Toaster'
 import { showToast } from '../lib/toast'
-import { isEditPath } from '../lib/routes'
+import { keepsScreenOnExpiry } from '../lib/routes'
 import { Button, ErrorState, Spinner } from './ui'
 
 /** 로그인 후 화면의 공통 틀: 사이드바(md~) / 하단 탭바 + 떠 있는 "+"(~767px) */
@@ -18,7 +18,7 @@ export function AppLayout() {
   const { pathname } = location
   const expired = !!status.data && !status.data.logged_in && !!status.data.expired
   const expiredSeq = status.data?.expiredSeq ?? 0
-  const editing = isEditPath(pathname)
+  const keepScreen = keepsScreenOnExpiry(pathname)
 
   // 사용 중 세션이 만료되면(401 unauthorized) 로그인 화면으로 보낸다.
   // 편집 화면에 작성 중인 내용이 있으면 이탈 경고가 먼저 뜬다. "머무르기"를 고르면 편집 폼만 남기고,
@@ -59,7 +59,7 @@ export function AppLayout() {
   // "+" 저장 버튼은 목록 화면(전체·좋아요·마감 임박)에서만 띄운다
   const showFab = !fullScreen && !pathname.startsWith('/settings') && !pathname.startsWith('/search')
 
-  // 만료 상태에서는 편집 화면의 폼만 남긴다 (사이드바·탭바·목록 등 다른 데이터는 그리지 않는다).
+  // 만료 상태에서는 편집 폼(과 2차 인증 재설정 화면)만 남긴다 (사이드바·탭바·목록 등 다른 데이터는 그리지 않는다).
   // 요소 구조(자리)는 그대로 두어 편집 폼이 다시 마운트되지 않게 한다 (작성 중인 내용 유지).
   return (
     <div className="min-h-dvh px-safe md:flex">
@@ -81,7 +81,7 @@ export function AppLayout() {
             </Button>
           </div>
         )}
-        {(!expired || editing) && <Outlet />}
+        {(!expired || keepScreen) && <Outlet />}
       </main>
       {showFab && !expired && (
         <Link

@@ -71,7 +71,7 @@ export function SettingsPage() {
             <ErrorState message={errorMessage(topics.error)} onRetry={() => topics.refetch()} />
           ) : (
             <ManageList
-              items={topics.data.map((t) => ({ id: t.id, name: `#${t.name}` }))}
+              items={topics.data.map((t) => ({ id: t.id, name: `#${t.name}`, editName: t.name }))}
               addPlaceholder="새 주제 이름"
               emptyText="아직 주제가 없어요. 아래에서 추가해 보세요."
               onAdd={(name) => createTopic.mutateAsync(name.replace(/^#/, ''))}
