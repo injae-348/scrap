@@ -37,8 +37,18 @@
 #
 # 요구 버전: Docker Engine 25+ (healthcheck start_interval), Docker Compose 2.24+ (env_file path/required).
 #   확인 명령은 deploy/README.md 12-0.
+#
+# 로그: 두 컨테이너 모두 json-file, 파일당 10MB × 3개 상한 (아래 x-logging). 서버 daemon.json 설정(README 2-1)과
+#   상관없이 이 파일만으로 상한이 걸린다. 로그는 DB·백업과 같은 부트 디스크에 쌓이므로 끝없이 커지지 않게 한다.
+# 메모리 한도(mem_limit)는 배포 후 실제 사용량을 README 12-7 절차로 확인한 결과를 근거로만 바꾼다.
 
 name: scrap-app
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
 
 services:
   api:
@@ -51,12 +61,17 @@ services:
     # → 로그인 실패 제한이 실제 클라이언트 IP를 보고, https 판단(Secure 쿠키·리다이렉트)이 맞게 된다.
     #   Caddy는 클라이언트가 보낸 X-Forwarded-* 를 믿지 않고 자기가 본 주소로 덮어쓴다 (trusted_proxies 미설정).
     # 값은 아래 networks.app 의 web ipv4_address 와 같아야 한다.
+    # --loop=uvloop --http=httptools: 기본값(auto)이 고르던 것을 명시한다 (설치돼 있지 않으면 자동으로 다른 것을
+    #   고르지 않고 기동이 실패해 배포가 롤백된다). 지금까지 배포된 모든 api 이미지에 두 패키지가 들어 있어
+    #   (Phase 3·4: uvicorn[standard], Phase 5~: requirements.in 에 직접 고정) 옛 이미지로 롤백해도 동작한다.
     command:
       - uvicorn
       - app.main:app
       - --host=0.0.0.0
       - --port=8000
       - --workers=1
+      - --loop=uvloop
+      - --http=httptools
       - --proxy-headers
       - --forwarded-allow-ips=172.30.80.10
       - --no-server-header
@@ -75,7 +90,8 @@ services:
       app: {}
     volumes:
       # SQLite. api는 10001로 실행되므로 폴더 소유자를 그 UID로 맞춘다 (deploy/README.md 3-2).
-      # 배포 직전 백업(deploy.sh)도 이 폴더에 임시 파일(.predeploy-backup.tmp)을 만들었다가 지운다.
+      # 배포 직전 백업(deploy.sh)·일일 백업(backup.sh)도 이 폴더에 임시 파일(.predeploy-backup.tmp,
+      # .daily-backup.tmp)을 만들었다가 지운다.
       - type: bind
         source: /opt/scrap-app/data
         target: /data
@@ -91,6 +107,7 @@ services:
     pids_limit: 256
     security_opt:
       - no-new-privileges:true
+    logging: *default-logging
     healthcheck:
       # 이미지에 curl 이 없으므로 파이썬 표준 라이브러리로 확인한다. /api/health 는 DB를 열지 못하면 503 → 실패.
       test:
@@ -127,7 +144,7 @@ services:
     environment:
       SITE_DOMAIN: "${SITE_DOMAIN:?SITE_DOMAIN(예: <이름>.duckdns.org)이 필요합니다}"
       # .env 에 없거나 비어 있으면 Let's Encrypt 운영 CA.
-      # 시험할 때만 .env 에 staging 주소를 넣는다 (deploy/README.md 10단계).
+      # 시험할 때만 .env 에 staging 주소를 넣는다 (deploy/README.md 10절).
       ACME_CA: "${ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}"
     volumes:
       # 인증서·ACME 계정(/data)과 자동 설정(/config)을 서버 폴더에 유지한다.
@@ -153,6 +170,7 @@ services:
     pids_limit: 128
     security_opt:
       - no-new-privileges:true
+    logging: *default-logging
 
 networks:
   app:

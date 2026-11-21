@@ -2,11 +2,13 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link, useSearchParams } from 'react-router'
 import { aiApi } from '../api'
+import { type ApiError, isAiDailyLimit } from '../api/http'
 import { AiErrorNotice, AiProgress } from '../components/AiStatus'
 import { DueBadge } from '../components/DueBadge'
 import { IconSparkles } from '../components/Icons'
 import { SplitPane } from '../components/SplitPane'
-import { Button, EmptyState } from '../components/ui'
+import { Button, EmptyState, Notice } from '../components/ui'
+import { useRetryCountdown } from '../hooks/useRetryCountdown'
 import { cx, inputCls } from '../lib/styles'
 import { hostOf } from '../lib/url'
 import { displayText } from '../lib/text'
@@ -40,9 +42,15 @@ function SearchPane() {
   // 수십 초(서버 상한 90초) 걸릴 수 있다. signal을 넘기므로 화면을 떠나면(쓰는 곳이 없어지면) 요청이 취소된다.
   // 실패해도 자동으로 다시 보내지 않는다.
   const hasCachedResult = qc.getQueryState(aiSearchKey(query))?.status === 'success'
+  /** 이 화면에서 받은 하루 사용량 소진(429 ai_daily_limit). 질문을 바꿔도 Retry-After가 지날 때까지 AI 검색을 막는다 */
+  const [dailyLimitError, setDailyLimitError] = useState<ApiError | null>(null)
   const result = useQuery({
     queryKey: aiSearchKey(query),
-    queryFn: ({ signal }) => aiApi.search({ query }, signal),
+    queryFn: ({ signal }) =>
+      aiApi.search({ query }, signal).catch((e: unknown) => {
+        if (isAiDailyLimit(e)) setDailyLimitError(e)
+        throw e
+      }),
     enabled: query.length > 0 && (askedQuery === query || hasCachedResult),
     staleTime: Infinity,
     retry: false,
@@ -50,9 +58,16 @@ function SearchPane() {
     refetchOnReconnect: false,
   })
 
+  // 캐시에 남은 소진 오류(다시 들어온 경우)도 함께 본다
+  const dailyError = isAiDailyLimit(result.error) ? result.error : dailyLimitError
+  const dailyWait = useRetryCountdown(dailyError)
+  const blocked = dailyWait > 0
+  /** 지금 보이는 결과 자리가 이미 소진 안내(AiErrorNotice)인지 */
+  const showingDailyNotice = result.isError && isAiDailyLimit(result.error) && !result.isFetching
+
   const ask = (q: string) => {
     const t = q.trim().slice(0, QUERY_MAX)
-    if (!t) return
+    if (!t || blocked) return
     setInput(t)
     setCancelled(false)
     setAskedQuery(t)
@@ -94,10 +109,21 @@ function SearchPane() {
             enterKeyHint="search"
             className={cx(inputCls, 'flex-1')}
           />
-          <Button type="submit" variant="primary" disabled={!input.trim()} loading={result.isFetching} className="shrink-0">
+          <Button
+            type="submit"
+            variant="primary"
+            disabled={!input.trim() || blocked}
+            loading={result.isFetching}
+            className="shrink-0"
+          >
             {result.isFetching ? '' : '검색'}
           </Button>
         </form>
+        {blocked && dailyError && !showingDailyNotice && (
+          <div className="px-4 pb-3 lg:px-5">
+            <Notice tone="warn">{dailyError.message}</Notice>
+          </div>
+        )}
       </header>
 
       {!query ? (
@@ -110,7 +136,8 @@ function SearchPane() {
                 key={ex}
                 type="button"
                 onClick={() => ask(ex)}
-                className="min-h-11 rounded-full border border-line px-3.5 text-sm text-fg hover:bg-hover lg:min-h-9"
+                disabled={blocked}
+                className="min-h-11 rounded-full border border-line px-3.5 text-sm text-fg hover:bg-hover disabled:opacity-50 disabled:hover:bg-transparent lg:min-h-9"
               >
                 {ex}
               </button>
@@ -178,7 +205,7 @@ function SearchPane() {
             ‘{displayText(query)}’ 질문으로 AI 검색을 할까요?
           </p>
           <p className="text-xs text-muted">AI 검색은 시간이 걸리고 사용 횟수에 들어가서, 눌렀을 때만 보내요.</p>
-          <Button variant="primary" onClick={() => ask(query)}>
+          <Button variant="primary" disabled={blocked} onClick={() => ask(query)}>
             <IconSparkles size={16} />이 질문으로 검색
           </Button>
         </div>

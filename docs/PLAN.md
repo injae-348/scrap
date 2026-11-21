@@ -138,6 +138,7 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] 운영 배포 (2026-11-21 PR #13 병합 → 승인 → 배포 성공, 서버 `.env`에 키 추가·반영 확인, 실제 키로 AI로 채우기·AI 검색 확인)
 
 ### Phase 8. 운영
+> 결정 사항 (2026-11-21): 외부 백업은 사용자 Mac이 매일 서버에서 가져온다(전용 SSH 키 + 강제 명령 `backup-send.sh`, 목록·받기만). 일일 백업은 age 공개키로 암호화(서버에는 수신자 공개키만, 개인키는 암호 보호 파일로 사용자가 두 곳에 보관). 서버 14개·Mac 30일 + 월간 12개월 보관. COOP·CORP 헤더는 넣고, compose `secrets:`·최소 프론트 버전 확인은 하지 않는다. AI 하루 토큰 예산 기본 1,000,000(`AI_TOKENS_PER_DAY`), 하루 한도 초과는 429 `ai_daily_limit` (`docs/API.md` v1.6). GHCR은 커밋 SHA 버전 최근 30개 + 최근 배포 기록 SHA 보존. 운영 절차는 `deploy/README.md` 13~21절, 관리 명령은 `python -m app.admin`. 리뷰: `docs/reviews/qa-8-20261121.md` (보안 리뷰는 로컬 전용).
 - [ ] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업
 - [ ] 운영 절차 문서화 (`deploy/README.md`: 수동 롤백, 백업 복원, 비밀값 교체)
 - [ ] CI 배포 키 정기 교체 절차, GHCR 옛 이미지 보존 기간 정책

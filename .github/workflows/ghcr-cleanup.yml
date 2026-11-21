@@ -1,0 +1,142 @@
+# GHCR 옛 이미지 정리 (월 1회 + 수동 실행). 배포·빌드와 무관하고, production Environment·시크릿을 쓰지 않는다.
+#
+# 정책 (deploy/README.md 21절)
+#   패키지 scrap-api, scrap-web 각각:
+#     - 커밋 SHA 태그가 붙은 버전 중 최근 KEEP(30)개는 남긴다 (만든 시각 기준).
+#     - production 에 최근 배포된 SHA 는 개수와 상관없이 남긴다 (아래 "보호").
+#     - 태그가 없는 버전, SHA 형식이 아닌 태그가 붙은 버전은 지우지 않는다.
+#     - 나머지(오래된 SHA 태그 버전)를 지운다.
+#
+# 전제: 이미지는 provenance: false 로 만든 단일 매니페스트다 (deploy.yml). 그래서 빌드 1번 = 패키지 버전 1개이고,
+#   다른 버전에 딸린 하위 매니페스트(태그 없는 버전)가 없다. 이 전제는 아래 "단일 매니페스트 확인"에서 실행마다 검사하고,
+#   어긋나면 아무것도 지우지 않고 실패한다. 태그 없는 버전은 어떤 경우에도 지우지 않는다.
+#
+# 보호 (서버의 현재·직전 배포 SHA 를 지우지 않는다는 근거)
+#   - 서버에 올라가는 버전은 모두 deploy.yml 의 deploy 잡(Environment production)을 거친다 (예전 실행 Re-run 포함).
+#     GitHub 은 그때마다 production 배포 기록(deployment)을 남긴다. 사람이 서버에서 쓰는 rollback.sh 는 이미 배포된
+#     state/current·previous 사이만 오간다.
+#   - 서버 state 의 current·previous 는 "deploy.sh 까지 성공한 가장 최근 배포 2개"다. GitHub 기록이 success 인 배포는
+#     모두 deploy.sh 까지 성공한 것이므로, 최신 기록부터 거슬러 올라가며 성공(success/inactive) SHA 를 PROTECT 개
+#     모을 때까지 **지나온 모든 기록(실패 포함)의 SHA 를 보호**하면 current·previous 는 반드시 그 안에 든다.
+#     (deploy.sh 는 성공했지만 외부 헬스체크에서 잡이 실패한 배포도 지나온 기록이라 보호된다.)
+#   - previous 까지 확실히 덮으려면 성공 기록이 2개 이상 필요하다. 배포 기록을 읽지 못하거나 최근 100건 안에서
+#     성공 기록을 2개 넘게 찾지 못하면(2개 미만) 아무것도 지우지 않고 실패한다.
+#   - 그 밖에 최근 30개 빌드가 함께 남으므로 30일 안의 실행 Re-run(README 12-6 방법 A)도 대개 그대로 된다.
+#
+# 수동 실행은 기본이 "미리 보기"(dry_run: true, 지우지 않고 대상만 출력)다. 예약 실행은 실제로 지운다.
+# 실제 삭제는 DRY_RUN 이 정확히 "false" 일 때만 한다 (그 밖의 값·빈 값은 미리 보기).
+# 삭제 권한: 패키지 설정의 Manage Actions access 에서 이 저장소 역할이 Admin 이어야 한다 (README 21-1).
+name: GHCR cleanup
+
+on:
+  schedule:
+    # 매월 3일 01:41 UTC
+    - cron: "41 1 3 * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "미리 보기 (지우지 않고 대상만 출력)"
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: ghcr-cleanup
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: cleanup
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      packages: write
+      deployments: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PACKAGES: scrap-api scrap-web
+      KEEP: "30"
+      PROTECT: "5"
+      # 예약 실행 → false (실제 삭제), 수동 실행 → 입력값 (기본 true)
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
+    steps:
+      - name: Delete old image versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          owner="${GITHUB_REPOSITORY_OWNER}"
+          case "$(gh api "/users/${owner}" --jq .type)" in
+            User) base="/users/${owner}" ;;
+            Organization) base="/orgs/${owner}" ;;
+            *) echo "::error::저장소 소유자 종류를 알 수 없음"; exit 1 ;;
+          esac
+          echo "미리 보기: $([ "$DRY_RUN" = false ] && echo 아님 || echo 예) / 유지: 최근 ${KEEP}개 + 최근 성공 배포 ${PROTECT}개까지의 모든 배포 SHA"
+
+          # ── 보호할 SHA: production 배포 기록 (최신부터) ──
+          protected=" "
+          found=0
+          while read -r id sha; do
+            [ -n "$id" ] || continue
+            protected="${protected}${sha} "
+            state=$(gh api "/repos/${GITHUB_REPOSITORY}/deployments/${id}/statuses?per_page=1" --jq '.[0].state // ""')
+            if [ "$state" = success ] || [ "$state" = inactive ]; then
+              found=$((found + 1))
+              [ "$found" -ge "$PROTECT" ] && break
+            fi
+          done < <(gh api "/repos/${GITHUB_REPOSITORY}/deployments?environment=production&per_page=100" \
+                     --jq '.[] | "\(.id) \(.sha)"')
+          if [ "$found" -lt 2 ]; then
+            echo "::error::production 성공 배포 기록이 2개 미만(${found}개) — 직전 버전을 확실히 보호할 수 없어 아무것도 지우지 않는다"
+            exit 1
+          fi
+          echo "보호하는 배포 SHA: $(tr ' ' '\n' <<< "$protected" | grep . | sort -u | cut -c1-7 | tr '\n' ' ')"
+
+          for pkg in $PACKAGES; do
+            echo "── ${pkg}"
+            # id, 만든 시각, 태그(쉼표) — 최신부터
+            versions=$(gh api --paginate "${base}/packages/container/${pkg}/versions?per_page=100" \
+              --jq '.[] | [(.id|tostring), .created_at, ((.metadata.container.tags // []) | join(","))] | @tsv' \
+              | sort -t $'\t' -k2,2r)
+
+            # 단일 매니페스트 확인: 가장 최근 SHA 태그 버전이 이미지 인덱스가 아니어야 한다.
+            newest_tag=$(printf '%s\n' "$versions" | awk -F'\t' '$3 ~ /^[0-9a-f]{40}$/ {print $3; exit}')
+            if [ -z "$newest_tag" ]; then
+              echo "SHA 태그 버전이 없음 — 건너뜀"
+              continue
+            fi
+            media=$(docker buildx imagetools inspect --raw "ghcr.io/${owner,,}/${pkg}:${newest_tag}" | jq -r '.mediaType')
+            case "$media" in
+              application/vnd.oci.image.manifest.v1+json | application/vnd.docker.distribution.manifest.v2+json) ;;
+              *) echo "::error::${pkg}: 단일 매니페스트가 아님(${media}) — 정책 전제가 바뀌었으므로 지우지 않는다"; exit 1 ;;
+            esac
+
+            rank=0 kept=0 deleted=0
+            while IFS=$'\t' read -r vid created tags; do
+              [ -n "$vid" ] || continue
+              if [ -z "$tags" ]; then
+                continue                              # 태그 없는 버전은 지우지 않는다
+              fi
+              all_sha=1 prot=0
+              for t in ${tags//,/ }; do
+                [[ $t =~ ^[0-9a-f]{40}$ ]] || all_sha=0
+                case "$protected" in *" ${t} "*) prot=1 ;; esac
+              done
+              if [ "$all_sha" -eq 0 ]; then
+                kept=$((kept + 1)); continue           # SHA 가 아닌 태그(사람이 붙인 것)는 남긴다
+              fi
+              rank=$((rank + 1))
+              if [ "$rank" -le "$KEEP" ] || [ "$prot" -eq 1 ]; then
+                kept=$((kept + 1)); continue
+              fi
+              echo "삭제 대상: ${tags:0:7} (${created})"
+              if [ "$DRY_RUN" = false ]; then
+                if ! gh api -X DELETE "${base}/packages/container/${pkg}/versions/${vid}" >/dev/null; then
+                  echo "::error::${pkg} 버전 삭제 실패 — 패키지 설정 Manage Actions access 에서 이 저장소 역할이 Admin 인지 확인 (README 21-1)"
+                  exit 1
+                fi
+              fi
+              deleted=$((deleted + 1))
+            done <<< "$versions"
+            echo "${pkg}: 남김 ${kept}개, $([ "$DRY_RUN" = false ] && echo '삭제' || echo '삭제 예정') ${deleted}개"
+          done

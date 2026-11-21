@@ -2,6 +2,8 @@
 #
 #   test   : ci.yml 재사용 (frontend, backend 검사 재실행)
 #   build  : buildx 로 서버 아키텍처(linux/amd64) api·web 이미지 → GHCR push, 태그 = 커밋 SHA
+#            web 은 push 전에 이미지 안 /srv 를 꺼내 비밀값 형태를 검사하고(deploy/scan-dist.sh), push 한 이미지가
+#            검사한 이미지와 같은 층인지 확인한다. 빌드 인자는 공개값인 커밋 SHA(VITE_APP_BUILD_ID)뿐이다.
 #   deploy : [수동 승인] Environment "production" → ssh deploy@서버 "<SHA>"
 #            서버 쪽은 authorized_keys 강제 명령으로 deploy/deploy.sh 만 실행된다 (백업 → pull → up → 헬스체크 → 실패 시 롤백).
 #
@@ -79,6 +81,31 @@ jobs:
           cache-from: type=gha,scope=scrap-api
           cache-to: type=gha,scope=scrap-api,mode=max
 
+      # web: 먼저 러너 docker 에 불러와(load, push 없음) 이미지 안 /srv 를 검사한다 → 통과해야 push 한다.
+      # 빌드 인자 VITE_APP_BUILD_ID = 커밋 SHA (공개값. 프론트가 index.html·서비스워커에 넣어 PWA 갱신 안내에 쓴다).
+      # ⚠️ 빌드 인자에 비밀값을 넣지 않는다 (공개 이미지·로그로 보일 수 있다, deploy/README.md 17-2).
+      - name: Build web (load for scan, no push)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: deploy/web.Dockerfile
+          platforms: linux/amd64
+          push: false
+          load: true
+          provenance: false
+          tags: ${{ env.WEB_IMAGE }}:${{ github.sha }}
+          build-args: |
+            VITE_APP_BUILD_ID=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.title=scrap-web
+          cache-from: type=gha,scope=scrap-web
+
+      - name: Scan web image /srv for secrets (before push)
+        run: bash deploy/scan-dist.sh --image "${WEB_IMAGE}:${GITHUB_SHA}"
+
+      # 같은 입력으로 다시 빌드하면 바로 앞 단계의 빌더 캐시를 그대로 써서 같은 층이 나온다 → 그대로 push.
       - name: Build and push web
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
@@ -88,12 +115,28 @@ jobs:
           push: true
           provenance: false
           tags: ${{ env.WEB_IMAGE }}:${{ github.sha }}
+          build-args: |
+            VITE_APP_BUILD_ID=${{ github.sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}
             org.opencontainers.image.title=scrap-web
           cache-from: type=gha,scope=scrap-web
           cache-to: type=gha,scope=scrap-web,mode=max
+
+      # push 한 이미지의 층(압축 전 digest)이 검사한 이미지와 같은지 확인한다. 다르면 배포 단계로 넘어가지 않는다.
+      # 단일 매니페스트(provenance: false)가 아니면 .rootfs 가 없어 여기서 실패한다 (GHCR 정리 워크플로의 전제도 함께 확인).
+      - name: Verify pushed web image = scanned image
+        run: |
+          set -euo pipefail
+          ref="${WEB_IMAGE}:${GITHUB_SHA}"
+          scanned=$(docker image inspect --format '{{json .RootFS.Layers}}' "$ref" | jq -c .)
+          pushed=$(docker buildx imagetools inspect "$ref" --format '{{json .Image}}' | jq -c '.rootfs.diff_ids')
+          if [ "$scanned" != "$pushed" ]; then
+            echo "::error::push 한 web 이미지가 검사한 이미지와 다릅니다 (배포하지 않음)"
+            exit 1
+          fi
+          echo "push 한 web 이미지 = 검사한 이미지 ($(echo "$pushed" | jq length)개 층)"
 
   deploy:
     name: deploy
@@ -172,7 +215,7 @@ jobs:
             echo "외부 헬스체크 대기 (${i}번째: HTTP ${code})"
             sleep 5
           done
-          echo "::error::외부에서 /api/health 가 200이 아님. 서버 안 헬스체크는 통과했으므로 DNS(DuckDNS)·OCI 보안 목록·iptables 를 확인 (deploy/README.md 10단계)"
+          echo "::error::외부에서 /api/health 가 200이 아님. 서버 안 헬스체크는 통과했으므로 DNS(DuckDNS)·OCI 보안 목록·iptables 를 확인 (deploy/README.md 10절)"
           exit 1
 
       - name: Remove SSH key

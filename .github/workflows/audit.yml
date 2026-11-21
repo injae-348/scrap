@@ -1,0 +1,83 @@
+# 의존성 취약점 정기 검사 (주 1회 + 수동 실행). 검사만 하고 배포·push 는 없다. 시크릿을 쓰지 않는다.
+#
+# PR CI(ci.yml)의 pip-audit·npm audit 은 PR 이 올라올 때만 돈다. 고정된 버전에 나중에 공개된 취약점은 다음 PR 전까지
+# 알 수 없으므로 주 1회 같은 검사를 돌린다. 실패하면 GitHub 이 저장소 소유자에게 실패 알림을 보낸다.
+#   - 백엔드: pip-audit (api 이미지 의존성 requirements.txt + 개발 도구 requirements-dev.txt)
+#   - 프론트: npm audit — 런타임만(high 이상, PR 차단 기준과 같음) + 빌드 도구까지 포함한 전체(high 이상)
+#     npm audit 은 package-lock.json 만 읽는다 (npm ci 를 하지 않으므로 패키지 설치 스크립트도 돌지 않는다).
+# 대응: 실패한 단계 로그의 패키지·권고를 보고 의존성을 올리는 PR 을 만든다 (deploy/README.md 21-2).
+#
+# 공개 저장소 주의: pull_request_target 을 쓰지 않고, production Environment 도 쓰지 않는다. 권한은 contents: read 뿐.
+# GitHub 은 저장소에 60일 동안 활동이 없으면 예약 워크플로를 꺼 버린다 → Actions 화면에서 다시 켠다.
+name: Dependency audit
+
+on:
+  schedule:
+    # 매주 월요일 00:17 UTC (한국 09:17). 정시는 GitHub 예약 실행이 몰려 늦어지기 쉬워 피한다.
+    - cron: "17 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: pip-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+
+      # pip-audit 은 requirements-dev.txt 에 해시로 고정돼 있다 (ci.yml backend 잡과 같은 설치).
+      - name: Install dependencies
+        run: python -m pip install --require-hashes -r requirements-dev.txt
+
+      - name: pip-audit (api image dependencies)
+        run: pip-audit --strict --require-hashes --disable-pip --progress-spinner off -r requirements.txt
+
+      - name: pip-audit (dev tools)
+        if: ${{ !cancelled() }}
+        run: pip-audit --strict --require-hashes --disable-pip --progress-spinner off -r requirements-dev.txt
+
+  frontend:
+    name: npm audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+
+      - name: npm audit (runtime, high+)
+        run: npm audit --omit=dev --audit-level=high
+
+      # 빌드·테스트 도구(devDependencies)까지. 이쪽 취약점은 브라우저에는 나가지 않지만 빌드 결과물에 영향을 줄 수 있다.
+      - name: npm audit (all incl. build tools, high+)
+        if: ${{ !cancelled() }}
+        run: npm audit --audit-level=high

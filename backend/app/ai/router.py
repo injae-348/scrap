@@ -1,10 +1,11 @@
-"""AI API `/api/ai` (docs/API.md v1.5 "AI 세부 규칙").
+"""AI API `/api/ai` (docs/API.md v1.5·v1.6 "AI 세부 규칙").
 
 세션 필수 상위 라우터(app/routing.py) 아래에 붙는다. AI가 돌려준 값은 저장하지 않는다.
 
 오류 판정 순서: (미들웨어) 공통 429 → 403 → 401 → 413 → (여기) 입력 오류 400 → AI 사용 불가 503
-`ai_unavailable` → AI 요청 제한 429 → 처리. 처리 중 실패는 502 `ai_failed`, 사용 한도·결제 문제는
-503 `ai_quota_exceeded`(Retry-After 없음).
+`ai_unavailable` → AI 요청 제한 429(분·하루 횟수·하루 토큰 예산·동시 처리) → 처리.
+처리 중 실패는 502 `ai_failed`, 사용 한도·결제 문제는 503 `ai_quota_exceeded`(Retry-After 없음).
+AI 검색은 매 Claude 호출 직전에도 하루 토큰 예산을 확인한다(넘으면 429).
 
 로그에는 키·본문·검색어·URL을 남기지 않는다.
 """
@@ -32,7 +33,16 @@ from app.ai.claude import (
     check_stop_reason,
     response_json,
 )
-from app.ai.limits import AiLimitExceeded, AiRequestLimiter, AiTicket, kst_day
+from app.ai.limits import (
+    AiDailyLimitExceeded,
+    AiLimitExceeded,
+    AiRequestLimiter,
+    AiTicket,
+    AiTokenBudgetExceeded,
+    kst_day,
+    response_tokens,
+)
+from app.ai.memolinks import strip_memo_links
 from app.ai.prompts import (
     EXTRACT_SCHEMA,
     EXTRACT_SYSTEM,
@@ -111,6 +121,35 @@ def _ai_failed() -> ApiError:
     return ApiError(502, "ai_failed", "AI 응답을 받지 못했어요. 잠시 후 다시 시도해 주세요.")
 
 
+def _too_many(retry_after: int) -> ApiError:
+    return ApiError(
+        429,
+        "too_many_requests",
+        "AI 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _daily_limit_reached(retry_after: int) -> ApiError:
+    # 하루 요청 횟수 (docs/API.md v1.6). Retry-After 는 다음 Asia/Seoul 자정까지 (최소 1초).
+    return ApiError(
+        429,
+        "ai_daily_limit",
+        "오늘 AI 요청 횟수를 모두 썼어요. 내일 다시 시도해 주세요.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
+def _token_budget_exhausted(retry_after: int) -> ApiError:
+    # 하루 토큰 예산 (docs/API.md v1.6). Retry-After 는 다음 Asia/Seoul 자정까지 (최소 1초).
+    return ApiError(
+        429,
+        "ai_daily_limit",
+        "오늘 AI 사용량을 모두 썼어요. 내일 다시 시도해 주세요.",
+        headers={"Retry-After": str(retry_after)},
+    )
+
+
 def _ai_quota() -> ApiError:
     # 언제 풀릴지 서버가 알 수 없으므로 Retry-After 를 넣지 않는다.
     return ApiError(503, "ai_quota_exceeded", "이번 달 AI 사용 한도에 도달했어요.")
@@ -181,13 +220,13 @@ def _gateway(request: Request) -> ClaudeGateway:
 async def _begin(limiter: AiRequestLimiter) -> AiTicket:
     try:
         return await run_in_threadpool(limiter.begin)
+    except AiTokenBudgetExceeded as exc:
+        raise _token_budget_exhausted(exc.retry_after) from None
+    except AiDailyLimitExceeded as exc:
+        raise _daily_limit_reached(exc.retry_after) from None
     except AiLimitExceeded as exc:
-        raise ApiError(
-            429,
-            "too_many_requests",
-            "AI 요청이 너무 많아요. 잠시 후 다시 시도해 주세요.",
-            headers={"Retry-After": str(exc.retry_after)},
-        ) from None
+        # 분당 횟수·동시 처리
+        raise _too_many(exc.retry_after) from None
     except DatabaseUnavailableError as exc:
         logger.error("AI 요청 제한 확인 실패: %s", type(exc).__name__)
         raise _db_unavailable() from None
@@ -199,6 +238,35 @@ async def _commit(limiter: AiRequestLimiter, ticket: AiTicket) -> None:
     except (DatabaseUnavailableError, sqlite3.Error) as exc:
         logger.error("AI 요청 횟수 기록 실패: %s", type(exc).__name__)
         raise _db_unavailable() from None
+
+
+async def _check_tokens(limiter: AiRequestLimiter) -> None:
+    """AI 검색의 매 Claude 호출 직전: 하루 토큰 예산 확인 (넘었으면 `AiTokenBudgetExceeded`)."""
+    try:
+        await run_in_threadpool(limiter.check_tokens)
+    except (DatabaseUnavailableError, sqlite3.Error) as exc:
+        logger.error("AI 토큰 사용량 확인 실패: %s", type(exc).__name__)
+        raise _db_unavailable() from None
+
+
+async def _create(
+    gateway: ClaudeGateway,
+    limiter: AiRequestLimiter,
+    params: dict[str, Any],
+    deadline: float,
+) -> Any:
+    """Claude 호출 → 응답의 사용량을 바로 누적한다.
+
+    응답이 왔으면 내용(거부·형식 위반 등)과 상관없이 먼저 누적한다
+    (실패한 호출도 usage가 있으면 센다).
+    """
+    response = await gateway.create(params, deadline)
+    try:
+        await run_in_threadpool(limiter.add_tokens, response_tokens(response))
+    except (DatabaseUnavailableError, sqlite3.Error) as exc:
+        logger.error("AI 토큰 사용량 기록 실패: %s", type(exc).__name__)
+        raise _db_unavailable() from None
+    return response
 
 
 async def _run(request: Request, timeout: float, work: Any) -> dict[str, object]:
@@ -217,6 +285,8 @@ async def _run(request: Request, timeout: float, work: Any) -> dict[str, object]
         raise _ai_failed() from None
     except AiQuotaExceeded:
         raise _ai_quota() from None
+    except AiTokenBudgetExceeded as exc:
+        raise _token_budget_exhausted(exc.retry_after) from None
     except ClientGone:
         # 응답을 받을 쪽이 없다. 이미 센 횟수는 되돌리지 않는다.
         raise ApiError(499, "client_closed", "요청이 취소되었습니다.") from None
@@ -264,11 +334,18 @@ def _clean_due_date(value: str | None) -> str | None:
 
 
 def _clean_memo(value: str | None) -> str | None:
+    """제어문자·글자 방향 서식 문자 제거 → 링크 정리(v1.6) → 2,000자 자르기.
+
+    링크 정리는 남은 `[`·`]`를 모두 이스케이프하므로, 자른 끝이 새 링크 문법이 될 수 없다.
+    """
     if value is None:
         return None
     text = _strip_bidi(value.replace("\r\n", "\n"))
     text = "".join(ch for ch in text if ch in "\n\t" or unicodedata.category(ch) != "Cc")
+    text = strip_memo_links(text.strip())
     text = text.strip()[:MEMO_MAX_CHARS].rstrip()
+    if (len(text) - len(text.rstrip("\\"))) % 2:
+        text = text[:-1].rstrip()  # 자르다 남은 이스케이프 반쪽 (`\[`의 `\`)
     return text or None
 
 
@@ -341,8 +418,11 @@ async def extract(body: ExtractBody, request: Request) -> dict[str, object]:
         topics: list[str] = await run_in_threadpool(_with_conn, database, _topic_names)
         message = extract_user_message(_today(request), topics, url, content)
         await _stop_if_disconnected(request)
-        await _commit(request.app.state.ai_limiter, ticket)
-        response = await gateway.create(
+        limiter: AiRequestLimiter = request.app.state.ai_limiter
+        await _commit(limiter, ticket)
+        response = await _create(
+            gateway,
+            limiter,
             {
                 "max_tokens": EXTRACT_MAX_TOKENS,
                 "system": [
@@ -365,7 +445,8 @@ async def extract(body: ExtractBody, request: Request) -> dict[str, object]:
         return {
             "title": clean_title(_strip_bidi(title)) if title is not None else None,
             "due_date": _clean_due_date(_optional_str(data, "due_date")),
-            "memo": _clean_memo(_optional_str(data, "memo")),
+            # 링크 정리는 긴 글에서 수십~수백 ms 걸릴 수 있어 이벤트 루프 밖에서 한다.
+            "memo": await run_in_threadpool(_clean_memo, _optional_str(data, "memo")),
             "topic_suggestions": _clean_topics(suggestions, topics),
             "content_fetched": True,
         }
@@ -456,7 +537,8 @@ async def search(body: SearchBody, request: Request) -> dict[str, object]:
 
     async def work(gateway: ClaudeGateway, ticket: AiTicket, deadline: float) -> dict[str, object]:
         database: Database = request.app.state.db
-        await _commit(request.app.state.ai_limiter, ticket)
+        limiter: AiRequestLimiter = request.app.state.ai_limiter
+        await _commit(limiter, ticket)
         messages: list[dict[str, Any]] = [
             {"role": "user", "content": search_user_message(_today(request), query)}
         ]
@@ -465,7 +547,11 @@ async def search(body: SearchBody, request: Request) -> dict[str, object]:
         data: dict[str, Any] | None = None
         for _ in range(MAX_ROUNDS):
             await _stop_if_disconnected(request)
-            response = await gateway.create(
+            # 회차마다 대화가 길어지므로 매 호출 직전에 하루 토큰 예산을 확인한다.
+            await _check_tokens(limiter)
+            response = await _create(
+                gateway,
+                limiter,
                 {
                     "max_tokens": SEARCH_MAX_TOKENS,
                     # 자동 캐시: 매 회차의 마지막 블록까지 캐시 → 다음 회차는 앞부분을 다시 읽는다.

@@ -12,7 +12,8 @@
 - `ANTHROPIC_API_KEY`: 선택. 없거나 `.env.example` 자리표시자이거나 `sk-ant-`로 시작하지 않으면
   "미설정"(None) → 앱은 정상 기동하고 `/api/ai/*`만 503 `ai_unavailable`.
 - `ANTHROPIC_FALLBACKS`: 기본 켜짐. 정확히 `0`이면 거부 시 다른 모델로 다시 처리하지 않는다.
-- `ANTHROPIC_MODEL`(기본 `claude-opus-5-5`), `AI_PER_MINUTE`(기본 10), `AI_PER_DAY`(기본 200):
+- `ANTHROPIC_MODEL`(기본 `claude-opus-5-5`), `AI_PER_MINUTE`(기본 10), `AI_PER_DAY`(기본 200),
+  `AI_TOKENS_PER_DAY`(기본 1,000,000, 1~100,000,000):
   형식이 틀리면 기본값을 쓰고 경고 로그를 남긴다 (AI 설정 실수로 앱 전체가 멈추지 않게).
 
 비밀값은 로그·예외 메시지에 넣지 않는다.
@@ -53,6 +54,9 @@ DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 DEFAULT_AI_PER_MINUTE = 10
 DEFAULT_AI_PER_DAY = 200
 AI_LIMIT_MAX = 100_000
+# 하루 토큰 예산 (docs/API.md v1.6): Claude 응답 usage 합계의 Asia/Seoul 날짜별 상한.
+DEFAULT_AI_TOKENS_PER_DAY = 1_000_000
+AI_TOKENS_PER_DAY_MAX = 100_000_000
 _MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -128,15 +132,19 @@ def normalize_model(name: str | None) -> str:
     return value
 
 
-def _positive_int(raw: str | None, name: str, default: int) -> int:
+def _positive_int(raw: str | None, name: str, default: int, maximum: int = AI_LIMIT_MAX) -> int:
     value = (raw or "").strip()
     if not value:
         return default
-    if value.isascii() and value.isdigit() and 1 <= int(value) <= AI_LIMIT_MAX:
+    # 자릿수를 먼저 본다: 아주 긴 숫자 문자열을 int()로 바꾸지 않는다 (변환 길이 제한 오류 방지).
+    if (
+        value.isascii()
+        and value.isdigit()
+        and len(value.lstrip("0")) <= len(str(maximum))
+        and 1 <= int(value) <= maximum
+    ):
         return int(value)
-    logger.warning(
-        "%s 값이 올바르지 않아 기본값 %d 을(를) 씁니다 (1~%d).", name, default, AI_LIMIT_MAX
-    )
+    logger.warning("%s 값이 올바르지 않아 기본값 %d 을(를) 씁니다 (1~%d).", name, default, maximum)
     return default
 
 
@@ -173,6 +181,7 @@ class Settings:
     anthropic_model: str = DEFAULT_ANTHROPIC_MODEL
     ai_per_minute: int = DEFAULT_AI_PER_MINUTE
     ai_per_day: int = DEFAULT_AI_PER_DAY
+    ai_tokens_per_day: int = DEFAULT_AI_TOKENS_PER_DAY
     # 거부 시 다른 모델로 다시 처리(서버측 fallbacks). 정확히 "0"일 때만 끈다.
     anthropic_fallbacks: bool = True
 
@@ -254,5 +263,11 @@ def load_settings() -> Settings:
             os.environ.get("AI_PER_MINUTE"), "AI_PER_MINUTE", DEFAULT_AI_PER_MINUTE
         ),
         ai_per_day=_positive_int(os.environ.get("AI_PER_DAY"), "AI_PER_DAY", DEFAULT_AI_PER_DAY),
+        ai_tokens_per_day=_positive_int(
+            os.environ.get("AI_TOKENS_PER_DAY"),
+            "AI_TOKENS_PER_DAY",
+            DEFAULT_AI_TOKENS_PER_DAY,
+            maximum=AI_TOKENS_PER_DAY_MAX,
+        ),
         anthropic_fallbacks=os.environ.get("ANTHROPIC_FALLBACKS", "").strip() != "0",
     )

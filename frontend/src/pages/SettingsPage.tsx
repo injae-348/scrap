@@ -20,6 +20,7 @@ import {
   useUpdateSource,
   useUpdateTopic,
 } from '../hooks/queries'
+import { currentBuildId, shortBuildId } from '../lib/buildId'
 import { formatDateTime, relativeTime } from '../lib/date'
 import { parseDomainPatterns } from '../lib/url'
 import { describeUserAgent } from '../lib/userAgent'
@@ -122,6 +123,7 @@ export function SettingsPage() {
 
         <Sessions />
         <Account />
+        <AppBuild />
       </div>
     </div>
   )
@@ -218,5 +220,19 @@ function Account() {
         이 기기 로그아웃
       </Button>
     </Section>
+  )
+}
+
+/** 지금 실행 중인 앱의 빌드 식별자 (index.html의 meta). 새 버전으로 바뀌었는지 확인할 때 본다 */
+function AppBuild() {
+  const id = currentBuildId(document)
+  if (!id) return null
+  return (
+    <p className="text-xs text-muted">
+      앱 빌드{' '}
+      <span className="font-mono" title={id}>
+        {shortBuildId(id)}
+      </span>
+    </p>
   )
 }

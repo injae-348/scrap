@@ -68,14 +68,19 @@ uv pip compile --universal --python-version 3.12 --generate-hashes requirements-
 | `COOKIE_SECURE` | 켜짐 | 정확히 `0`일 때만 쿠키 Secure를 끈다 (로컬 http 개발용, `SITE_DOMAIN` 없을 때만). 켜져 있으면 쿠키 이름에 `__Host-` 접두사 |
 | `DB_PATH` | `./data/dev.db` | SQLite 파일 경로. 상위 디렉터리가 없으면 만들지 않고 `/api/health`가 503 |
 | `ENABLE_API_DOCS` | (꺼짐) | `1`이면 `/api/docs`, `/api/redoc`, `/api/openapi.json` 노출. 로컬 개발 전용 (`SITE_DOMAIN`이 있으면 기동 거부) |
-
 | `ANTHROPIC_API_KEY` | (없음) | Claude API 키. 없음·`.env.example` 자리표시자(`sk-ant-xxxx`)·`sk-ant-`로 시작하지 않음 → 앱은 정상 기동, `/api/ai/*`만 503 `ai_unavailable`. 값은 설정 출력·로그·오류 응답에 넣지 않는다 |
 | `ANTHROPIC_MODEL` | `claude-opus-5-5` | AI 기능이 쓰는 모델. 형식이 틀리면 기본값 + 경고 로그 |
 | `AI_PER_MINUTE` | `10` | AI 요청(`/ai/extract`·`/ai/search` 합산) 분당 상한 (메모리). 1 이상 정수, 틀리면 기본값 |
 | `ANTHROPIC_FALLBACKS` | 켜짐 | 거부 시 Anthropic이 정한 다른 Claude 모델로 다시 처리(서버측 fallbacks 베타). 정확히 `0`이면 베타 헤더와 `fallbacks`를 모두 빼고 설정한 모델에서만 처리한다 |
 | `AI_PER_DAY` | `200` | AI 요청 하루 상한 (Asia/Seoul 날짜, DB `ai_usage_days`). 1 이상 정수, 틀리면 기본값 |
+| `AI_TOKENS_PER_DAY` | `1000000` | AI 하루 토큰 예산 (Claude 응답 `usage`의 input·cache_creation·cache_read·output 합계, Asia/Seoul 날짜, DB `ai_usage_days.tokens`). 요청 시작과 AI 검색의 매 Claude 호출 직전에 확인하고, 넘으면 다음 자정까지 429 `ai_daily_limit`(하루 요청 횟수 초과와 같은 코드). 1~100,000,000 정수, 틀리면 기본값 + 경고 로그 |
 
 `ANTHROPIC_LOG`(SDK 디버그 로그)는 운영에서 켜지 않는다.
+
+## 로그
+- 접근 로그(`uvicorn.access`)에는 경로만 남는다. 쿼리 문자열(검색어 `q`, 커서 등)은 `app/logfilters.py`의 필터가
+  지운다. 필터는 `create_app()`에서 달리므로 기동 명령 인자와 상관없이 적용된다.
+- `trafilatura`·`htmldate`·`anthropic` 로거는 WARNING 이상만 남긴다.
 
 공통 요청 상한(IP별 분당 300회)은 환경변수로 바꾸지 않는다 (`app/config.py` `DEFAULT_REQUESTS_PER_MINUTE`).
 서버가 사용자 URL을 가져오는 요청(`/meta/preview`, `/ai/extract`의 페이지 가져오기)은 합쳐서 IP별 분당 20회다 (`app.state.fetch_limiter`).
@@ -92,6 +97,24 @@ uv pip compile --universal --python-version 3.12 --generate-hashes requirements-
   (추가 → 코드 전환 → 정리) 진행한다. 적용된 파일은 고치지 않고 새 번호로 만든다.
   새로 추가하는 NOT NULL 열에는 기본값을 둔다 (이전 코드의 INSERT가 깨지지 않게).
 
+## 운영 관리 명령 (`python -m app.admin`)
+서버에서는 돌고 있는 api 컨테이너 안에서 실행한다 (`docker compose exec api python -m app.admin <명령>`).
+앱과 같은 설정(`DB_PATH` 등 환경변수)·DB 연결·인증 함수(Argon2, TOTP, 복구 코드 해시)를 쓴다.
+SQLite WAL이라 앱이 도는 중에 실행해도 된다. DB 파일이 없으면 새로 만들지 않고 끝난다.
+로컬에서는 `backend/`에서 같은 환경변수로 `.venv/bin/python -m app.admin --help`.
+
+| 명령 | 하는 일 | 터미널 |
+|---|---|---|
+| `reset-2fa [--light-background]` | 인증 앱·복구 코드를 모두 잃었을 때. 새 TOTP 비밀값 → QR(ASCII)·수동 입력 키 표시 → 6자리 코드 확인(3번까지) 성공 시에만 저장 → 복구 코드 10개 새로 발급(한 번만 표시) → 모든 세션·계정 단위 인증 코드 실패 기록 삭제 | 필수 |
+| `set-password` | 비밀번호 두 번 입력(화면에 안 보임), 10~1024자, Argon2 저장 → 모든 세션 삭제 | 필수 |
+| `fts-check` | `scraps_fts` 검사: FTS5 `integrity-check` + 스크랩 수와 색인 행 수·빠진 행·남는 행·내용(제목·메모·URL·주제) 비교. 한 줄 판정 `✅ …`/`❌ …` | 불필요 |
+| `fts-rebuild` | 한 트랜잭션에서 색인 표를 같은 정의로 다시 만들고 스크랩 테이블에서 채운 뒤 `fts-check`와 같은 판정 | 불필요 |
+| `ai-usage [--days N]` | 최근 N일(기본 14, 최대 3660) 날짜별 AI 요청 수·토큰 수와 합계, 하루 상한 설정값 | 불필요 |
+
+- 종료 코드: 0 성공·정상, 1 실패·이상·취소(바꾼 것 없음), 2 실행 환경·사용법 오류(터미널 아님, 설정·DB 오류), 130 Ctrl+C(바꾼 것 없음).
+- 터미널 필수 명령은 표준입력·출력이 모두 터미널이 아니면 거부한다. 비밀값(TOTP 비밀값·복구 코드·비밀번호)은
+  화면에만 출력하고 로거로 보내지 않는다. 사용자가 0명이면 안내 후 종료(1)한다.
+
 ## 구조
 - `app/config.py` 설정·기동 검사, `app/db.py` 연결·마이그레이션, `app/migrations/NNNN_*.sql`
 - `app/routing.py` **인증 기본 거부**: 공개 엔드포인트 목록(6개)과 세션 필수 상위 라우터, 기동 시 전수 검사
@@ -101,7 +124,8 @@ uv pip compile --universal --python-version 3.12 --generate-hashes requirements-
 - `app/fetch.py` **사용자 URL 가져오기 공통 모듈** (`SafeFetcher`: IP 고정 연결·포트 80/443·공인 IP만·리다이렉트 재검사·크기/시간 상한·동시 수 제한). 사용자 URL은 이 모듈로만 가져온다 (다른 HTTP 클라이언트·trafilatura 내장 가져오기 금지, `tests/test_fetch.py`가 검사), `app/netguard.py` 공인 IP 판정
 - `app/meta.py` 제목 미리보기 API, `app/preview.py` 제목 추출(oEmbed·og:title 등)
 - `app/pagetext.py` AI로 채우기용 본문 추출 (trafilatura, HTML 문자열만 넘김. 파싱 전에 스크립트 등 블록을 덜어 내고 태그 수·입력 길이 상한을 둔다), `app/parsing.py` 파싱 전용 동시 실행 제한 (시간 초과로 기다림이 끝나도 파싱 스레드가 끝날 때까지 자리를 쥔다)
-- `app/ai/` AI API: `router.py`(`/ai/extract`·`/ai/search`), `claude.py`(Claude 호출·재시도·오류 분류, 클라이언트 지연 생성), `prompts.py`(고정 시스템 프롬프트·JSON 스키마·`search_scraps` 도구), `limits.py`(분·하루·동시 제한)
+- `app/ai/` AI API: `router.py`(`/ai/extract`·`/ai/search`), `claude.py`(Claude 호출·재시도·오류 분류, 클라이언트 지연 생성), `prompts.py`(고정 시스템 프롬프트·JSON 스키마·`search_scraps` 도구), `limits.py`(분·하루 횟수·하루 토큰 예산·동시 제한), `memolinks.py`(AI 채우기 메모의 링크 정리)
+- `app/admin.py` 운영 관리 명령, `app/logfilters.py` 접근 로그 쿼리 문자열 제거
 - `app/validation.py` 공통 입력 검사 (URL 검사는 스크랩 저장과 미리보기가 같은 함수를 쓴다)
 - `app/guard.py` 요청 본문 상한(앱 1MB, 인증 불필요 경로 16KB → 413)과 세션 사전 확인(세션 필요 경로는 본문을 읽기 전에 401)
 - `app/csrf.py` Origin 검사, `app/headers.py` `/api/*` `Cache-Control: no-store`

@@ -1,0 +1,30 @@
+# Mac 백업 가져오기 설정 — ~/.config/scrap-backup/config 로 복사해서 고친다 (deploy/README.md 14-4).
+# ⚠️ 공개 저장소: 이 예시 파일에는 자리표시자만 둔다. 실제 서버 주소를 넣은 파일은 저장소 밖(~/.config)에 둔다.
+# 형식: KEY=값 (한 줄에 하나, # 으로 시작하면 주석). ~/ 는 홈 폴더로 바뀐다. 같은 이름의 환경변수가 있으면 그 값이 우선한다.
+
+# 서버 주소 (필수) — <이름> 을 실제 DuckDNS 서브도메인으로 바꾼다
+SCRAP_BACKUP_HOST=<이름>.duckdns.org
+
+# 서버 사용자 (바꾸지 않는다)
+SCRAP_BACKUP_USER=deploy
+
+# 백업 수신 전용 SSH 키, 서버 호스트 키 파일 (README 14-1, 14-3)
+SCRAP_BACKUP_KEY=~/.ssh/scrap_backup_ed25519
+SCRAP_BACKUP_KNOWN_HOSTS=~/.ssh/scrap_backup_known_hosts
+
+# 보관 폴더. Desktop·Documents·Downloads 는 피한다 (launchd 로 실행할 때 macOS 개인정보 보호 권한에 막힌다).
+SCRAP_BACKUP_DIR=~/ScrapBackups
+
+# 보관 기간(일)과 날짜와 상관없이 남길 최소 개수, "백업이 오래됨" 경고 기준(일)
+SCRAP_BACKUP_KEEP_DAYS=30
+SCRAP_BACKUP_KEEP_MIN=7
+SCRAP_BACKUP_STALE_DAYS=3
+
+# 매월 첫 백업을 몇 개월 보관할지 (0 = 끔). 30일 삭제 대상에서 빠진다
+SCRAP_BACKUP_KEEP_MONTHLY=12
+
+# 백업 하나를 받을 때의 크기 상한(MB). 넘으면 받지 않고 실패로 알린다
+SCRAP_BACKUP_MAX_MB=500
+
+# 실패할 때 macOS 알림 (1 = 켬, 0 = 끔)
+SCRAP_BACKUP_NOTIFY=1

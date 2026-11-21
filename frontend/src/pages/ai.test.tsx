@@ -276,6 +276,50 @@ describe('AI로 채우기: 오류 코드', () => {
   })
 })
 
+describe('AI로 채우기: 하루 사용량 소진 (429 ai_daily_limit)', () => {
+  const DAILY_MSG = '오늘 AI 사용량을 모두 썼어요. 내일 다시 시도해 주세요.'
+
+  it('서버 message만 보여 주고 남은 시간·다시 시도 없이 버튼을 소진 표시로 막는다', async () => {
+    stubApi((m, p) =>
+      m === 'POST' && p === '/ai/extract' ? aiError(429, 'ai_daily_limit', DAILY_MSG, { 'Retry-After': '36000' }) : null,
+    )
+    await startEditor()
+    clickAi()
+    expect(await screen.findByText(DAILY_MSG)).toBeTruthy()
+    expect(screen.queryByText(/뒤에 다시 시도할 수 있어요/)).toBeNull()
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
+    const btn = panel().getByRole('button', { name: /AI로 채우기/ }) as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(btn.textContent).toContain('오늘 사용량 소진')
+    expect(btn.textContent).not.toContain('시간')
+  })
+
+  it('ai_daily_limit은 Retry-After가 작아도(자정 직전) 소진 표시', async () => {
+    stubApi((m, p) =>
+      m === 'POST' && p === '/ai/extract' ? aiError(429, 'ai_daily_limit', DAILY_MSG, { 'Retry-After': '30' }) : null,
+    )
+    await startEditor()
+    clickAi()
+    expect(await screen.findByText(DAILY_MSG)).toBeTruthy()
+    expect(screen.queryByText(/뒤에 다시 시도할 수 있어요/)).toBeNull()
+    const btn = panel().getByRole('button', { name: /AI로 채우기/ }) as HTMLButtonElement
+    expect(btn.disabled).toBe(true)
+    expect(btn.textContent).toContain('오늘 사용량 소진')
+  })
+
+  it('too_many_requests는 Retry-After가 커도 일반 429 표시 (남은 시간)', async () => {
+    stubApi((m, p) =>
+      m === 'POST' && p === '/ai/extract'
+        ? aiError(429, 'too_many_requests', 'AI 요청이 너무 많아요.', { 'Retry-After': '3600' })
+        : null,
+    )
+    await startEditor()
+    clickAi()
+    expect(await screen.findByText(/1시간 뒤에 다시 시도할 수 있어요/)).toBeTruthy()
+    expect(panel().getByRole('button', { name: /AI로 채우기/ }).textContent).toContain('1시간 뒤')
+  })
+})
+
 // ------------------------------------------------------------------ AI 검색
 const listItem = {
   id: 7,
@@ -389,6 +433,68 @@ describe('AI 검색', () => {
     expect(screen.queryByText(/서버 설정 필요/)).toBeNull()
     expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
     expect(screen.queryByText(/다시 시도할 수 있어요/)).toBeNull()
+  })
+})
+
+describe('AI 검색: 하루 사용량 소진 (429 ai_daily_limit)', () => {
+  const DAILY_MSG = '오늘 AI 요청 횟수를 모두 썼어요. 내일 다시 시도해 주세요.'
+
+  it('ai_daily_limit은 Retry-After가 작아도 서버 message만, 다시 시도 버튼·남은 시간 없음', async () => {
+    stubApi((m, p) =>
+      m === 'POST' && p === '/ai/search' ? aiError(429, 'ai_daily_limit', DAILY_MSG, { 'Retry-After': '30' }) : null,
+    )
+    await renderSearch()
+    expect(await screen.findByText(DAILY_MSG)).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
+    expect(screen.queryByText(/다시 시도할 수 있어요/)).toBeNull()
+  })
+
+  it('Retry-After가 지날 때까지 검색 버튼·예시 질문을 막고 요청을 보내지 않는다', async () => {
+    const calls = stubApi((m, p) =>
+      m === 'POST' && p === '/ai/search' ? aiError(429, 'ai_daily_limit', DAILY_MSG, { 'Retry-After': '3600' }) : null,
+    )
+    const router = await renderSearch()
+    expect(await screen.findByText(DAILY_MSG)).toBeTruthy()
+    const searchBtn = () => screen.getByRole('button', { name: '검색' }) as HTMLButtonElement
+    fireEvent.change(screen.getByLabelText('AI에게 질문'), { target: { value: '다른 가상 질문' } })
+    expect(searchBtn().disabled).toBe(true)
+    fireEvent.submit(screen.getByRole('search'))
+    // 질문 목록 화면으로 돌아가도 소진 안내가 남고 예시 질문은 막힌다
+    await act(async () => {
+      void router.navigate('/search')
+    })
+    expect(await screen.findByText(DAILY_MSG)).toBeTruthy()
+    const chip = screen.getByRole('button', { name: '도커 관련 정리 글' }) as HTMLButtonElement
+    expect(chip.disabled).toBe(true)
+    fireEvent.click(chip)
+    expect(searchBtn().disabled).toBe(true)
+    expect(calls.filter((c) => c.path === '/ai/search')).toHaveLength(1)
+  })
+
+  it('Retry-After가 지나면 다시 검색할 수 있다', async () => {
+    const calls = stubApi((m, p) =>
+      m === 'POST' && p === '/ai/search' ? aiError(429, 'ai_daily_limit', DAILY_MSG, { 'Retry-After': '1' }) : null,
+    )
+    await renderSearch()
+    expect(await screen.findByText(DAILY_MSG)).toBeTruthy()
+    const searchBtn = () => screen.getByRole('button', { name: '검색' }) as HTMLButtonElement
+    expect(searchBtn().disabled).toBe(true)
+    await waitFor(() => expect(searchBtn().disabled).toBe(false), { timeout: 3000 })
+    expect(screen.queryByRole('button', { name: '다시 시도' })).toBeNull()
+    fireEvent.change(screen.getByLabelText('AI에게 질문'), { target: { value: '다른 가상 질문' } })
+    fireEvent.submit(screen.getByRole('search'))
+    await waitFor(() => expect(calls.filter((c) => c.path === '/ai/search')).toHaveLength(2))
+  })
+
+  it('too_many_requests는 Retry-After가 커도 남은 시간 동안 다시 시도 버튼을 막는다', async () => {
+    stubApi((m, p) =>
+      m === 'POST' && p === '/ai/search'
+        ? aiError(429, 'too_many_requests', 'AI 요청이 너무 많아요.', { 'Retry-After': '3600' })
+        : null,
+    )
+    await renderSearch()
+    expect(await screen.findByText(/1시간 뒤에 다시 시도할 수 있어요/)).toBeTruthy()
+    expect((screen.getByRole('button', { name: '다시 시도' }) as HTMLButtonElement).disabled).toBe(true)
   })
 })
 

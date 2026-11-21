@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { aiErrorMessage, ApiError, formatWait } from '../api/http'
+import { aiErrorMessage, ApiError, formatWait, isAiDailyLimit } from '../api/http'
 import { useRetryCountdown } from '../hooks/useRetryCountdown'
 import { cx } from '../lib/styles'
 import { Button, Notice, Spinner } from './ui'
@@ -55,24 +55,28 @@ export function AiProgress({
  * ai_unavailable(서버 설정 필요)과 ai_quota_exceeded(월 사용 한도 도달)는 다시 시도해도 같으므로 버튼을 두지 않는다.
  * 둘은 같은 503이지만 code로 나눠 문구와 표시를 구분한다 (한도 도달은 경고, 설정 필요는 오류).
  * 입력 오류(invalid_input 등 429를 뺀 4xx)도 같은 요청을 다시 보내면 같은 결과이므로 버튼을 두지 않는다.
+ * 429 ai_daily_limit(하루 횟수·사용량 소진, isAiDailyLimit)은 서버 message만 보여 주고 남은 시간·다시 시도 버튼을 두지 않는다
+ * (경고로 표시. 기다린 시간이 다 지나면 "이제 다시 시도할 수 있어요"만 덧붙인다).
  */
 export function AiErrorNotice({ error, op, onRetry }: { error: unknown; op: 'extract' | 'search'; onRetry?: () => void }) {
   const wait = useRetryCountdown(error)
+  const daily = isAiDailyLimit(error)
   const is429 = error instanceof ApiError && error.status === 429 && !!error.retryAfter
   const code = error instanceof ApiError ? error.code : null
   const quota = code === 'ai_quota_exceeded'
   const clientError = error instanceof ApiError && error.status >= 400 && error.status < 500 && error.status !== 429
-  const noRetry = code === 'ai_unavailable' || quota || clientError
+  const noRetry = code === 'ai_unavailable' || quota || clientError || daily
   return (
-    <Notice tone={quota ? 'warn' : 'danger'}>
+    <Notice tone={quota || daily ? 'warn' : 'danger'}>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
         <p className="min-w-0 flex-1">
           {aiErrorMessage(error, op)}
-          {is429 && (
+          {is429 && !daily && (
             <span aria-live="off">
               {wait > 0 ? ` ${formatWait(wait)} 뒤에 다시 시도할 수 있어요.` : ' 이제 다시 시도할 수 있어요.'}
             </span>
           )}
+          {daily && is429 && wait === 0 && <span aria-live="off"> 이제 다시 시도할 수 있어요.</span>}
         </p>
         {onRetry && !noRetry && (
           <Button variant="secondary" disabled={wait > 0} onClick={onRetry} className="shrink-0">

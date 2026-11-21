@@ -41,6 +41,17 @@ logs/
 caddy_data/
 caddy_config/
 
+# 암호화 백업·age 키 (Phase 8) — 백업은 암호화돼 있어도 저장소에 넣지 않는다. age 개인키는 저장소·서버에 두지 않는다
+*.age
+*.db.gz
+age-key*
+age-identity*
+*.agekey
+ScrapBackups/
+# Mac 백업 가져오기의 실제 설정(서버 주소)·launchd plist(사용자 경로). 저장소에는 *.example 만 둔다
+deploy/mac/config
+deploy/mac/*.plist
+
 # 보안 리뷰 결과 (조치 전 취약점 공개 방지 — 로컬에만 보관)
 docs/reviews/security-*.md
 

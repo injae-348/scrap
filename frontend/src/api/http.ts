@@ -148,12 +148,22 @@ export function errorMessage(err: unknown): string {
 export const AI_UNAVAILABLE_MSG = 'AI 기능을 사용할 수 없어요 (서버 설정 필요)'
 
 /**
+ * AI 요청의 하루 횟수·토큰 사용량 소진 (429 `ai_daily_limit`, docs/API.md v1.6 "프론트 표시").
+ * Retry-After(다음 Asia/Seoul 0시까지)가 지날 때까지 AI 요청을 막는다. 판별은 오류 코드로만 한다
+ * (자정 직전에는 Retry-After가 짧을 수 있다). 분당·동시 처리 초과(too_many_requests)는 남은 시간을 세고 다시 시도할 수 있다.
+ */
+export function isAiDailyLimit(err: unknown): err is ApiError {
+  return err instanceof ApiError && err.code === 'ai_daily_limit'
+}
+
+/**
  * AI 요청(/ai/extract, /ai/search)의 오류 문구 (docs/API.md "AI 세부 규칙 → 프론트 표시").
  * - 503 ai_unavailable → 서버 설정 필요 안내
  * - 503 ai_quota_exceeded → 서버 message (월 사용 한도 도달. Retry-After 없음 → 다시 시도 안내 없이 표시)
  * - 502 ai_failed → 서버 message 그대로
  * - 413 payload_too_large (AI 채우기) → 붙여넣은 본문이 너무 김
  * - 429 → 서버 message만 돌려준다. 남은 시간은 화면이 Retry-After 기준으로 따로 센다 (AiErrorNotice)
+ *   429 ai_daily_limit(isAiDailyLimit, 하루 사용량 소진): 서버 message만 보여 주고 다시 시도 버튼을 두지 않는다
  */
 export function aiErrorMessage(err: unknown, op: 'extract' | 'search'): string {
   if (err instanceof ApiError) {
