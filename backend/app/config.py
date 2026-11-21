@@ -9,12 +9,18 @@
 - 허용 출처(CSRF Origin 검사): `https://<SITE_DOMAIN>` + `ALLOWED_ORIGINS`(쉼표 구분, 개발용).
 - 운영 설정 가드: `SITE_DOMAIN`이 있으면(운영) `COOKIE_SECURE=0`, https가 아닌 허용 출처,
   `ENABLE_API_DOCS=1`을 받지 않고 기동을 거부한다.
+- `ANTHROPIC_API_KEY`: 선택. 없거나 `.env.example` 자리표시자이거나 `sk-ant-`로 시작하지 않으면
+  "미설정"(None) → 앱은 정상 기동하고 `/api/ai/*`만 503 `ai_unavailable`.
+- `ANTHROPIC_FALLBACKS`: 기본 켜짐. 정확히 `0`이면 거부 시 다른 모델로 다시 처리하지 않는다.
+- `ANTHROPIC_MODEL`(기본 `claude-opus-5-5`), `AI_PER_MINUTE`(기본 10), `AI_PER_DAY`(기본 200):
+  형식이 틀리면 기본값을 쓰고 경고 로그를 남긴다 (AI 설정 실수로 앱 전체가 멈추지 않게).
 
 비밀값은 로그·예외 메시지에 넣지 않는다.
 """
 
 import logging
 import os
+import re
 from dataclasses import dataclass, field
 
 logger = logging.getLogger("app")
@@ -39,6 +45,15 @@ PUBLIC_SETUP_TOKEN_VALUES = frozenset(
 
 # 공통 요청 제한: IP별 분당 요청 수 (/api/* 전체, health 포함).
 DEFAULT_REQUESTS_PER_MINUTE = 300
+
+# AI (Phase 7)
+ANTHROPIC_API_KEY_PLACEHOLDER = "sk-ant-xxxx"  # .env.example 의 가짜 값
+ANTHROPIC_API_KEY_PREFIX = "sk-ant-"
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
+DEFAULT_AI_PER_MINUTE = 10
+DEFAULT_AI_PER_DAY = 200
+AI_LIMIT_MAX = 100_000
+_MODEL_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,127}$")
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 
@@ -87,6 +102,44 @@ def normalize_setup_token(token: str | None, session_secret: str | None = None) 
     return value
 
 
+def normalize_anthropic_api_key(key: str | None) -> str | None:
+    """쓸 수 있는 키면 그 값을, 아니면 None(미설정 → AI 기능만 503)을 돌려준다.
+
+    값은 로그·예외 메시지에 쓰지 않는다.
+    """
+    value = (key or "").strip()
+    if (
+        not value
+        or value == ANTHROPIC_API_KEY_PLACEHOLDER
+        or not value.startswith(ANTHROPIC_API_KEY_PREFIX)
+        or any(ch.isspace() or not ch.isprintable() for ch in value)
+    ):
+        return None
+    return value
+
+
+def normalize_model(name: str | None) -> str:
+    value = (name or "").strip()
+    if not value:
+        return DEFAULT_ANTHROPIC_MODEL
+    if not _MODEL_NAME.match(value):
+        logger.warning("ANTHROPIC_MODEL 형식이 올바르지 않아 기본 모델을 씁니다.")
+        return DEFAULT_ANTHROPIC_MODEL
+    return value
+
+
+def _positive_int(raw: str | None, name: str, default: int) -> int:
+    value = (raw or "").strip()
+    if not value:
+        return default
+    if value.isascii() and value.isdigit() and 1 <= int(value) <= AI_LIMIT_MAX:
+        return int(value)
+    logger.warning(
+        "%s 값이 올바르지 않아 기본값 %d 을(를) 씁니다 (1~%d).", name, default, AI_LIMIT_MAX
+    )
+    return default
+
+
 def normalize_origin(value: str) -> str:
     """출처 문자열을 비교용으로 정규화한다 (소문자, 끝 `/` 제거)."""
     return value.strip().rstrip("/").lower()
@@ -115,6 +168,13 @@ class Settings:
     requests_per_minute: int = DEFAULT_REQUESTS_PER_MINUTE
     # None이면 미설정 → 가입 불가. repr=False: 로그·예외에 값이 찍히지 않게 한다.
     setup_token: str | None = field(default=None, repr=False)
+    # None이면 미설정 → /api/ai/* 503. repr=False: 로그·예외에 값이 찍히지 않게 한다.
+    anthropic_api_key: str | None = field(default=None, repr=False)
+    anthropic_model: str = DEFAULT_ANTHROPIC_MODEL
+    ai_per_minute: int = DEFAULT_AI_PER_MINUTE
+    ai_per_day: int = DEFAULT_AI_PER_DAY
+    # 거부 시 다른 모델로 다시 처리(서버측 fallbacks). 정확히 "0"일 때만 끈다.
+    anthropic_fallbacks: bool = True
 
     def __post_init__(self) -> None:
         # 직접 만든 Settings(테스트 등)도 같은 규칙으로 검사한다.
@@ -122,7 +182,14 @@ class Settings:
         object.__setattr__(
             self, "setup_token", normalize_setup_token(self.setup_token, self.session_secret)
         )
+        object.__setattr__(
+            self, "anthropic_api_key", normalize_anthropic_api_key(self.anthropic_api_key)
+        )
         self._check_production_guard()
+
+    @property
+    def ai_available(self) -> bool:
+        return self.anthropic_api_key is not None
 
     @property
     def production(self) -> bool:
@@ -181,4 +248,11 @@ def load_settings() -> Settings:
         # 기본 켜짐. 정확히 "0"일 때만 끈다 (로컬 http 개발용).
         cookie_secure=os.environ.get("COOKIE_SECURE", "").strip() != "0",
         setup_token=os.environ.get("SETUP_TOKEN"),
+        anthropic_api_key=os.environ.get("ANTHROPIC_API_KEY"),
+        anthropic_model=normalize_model(os.environ.get("ANTHROPIC_MODEL")),
+        ai_per_minute=_positive_int(
+            os.environ.get("AI_PER_MINUTE"), "AI_PER_MINUTE", DEFAULT_AI_PER_MINUTE
+        ),
+        ai_per_day=_positive_int(os.environ.get("AI_PER_DAY"), "AI_PER_DAY", DEFAULT_AI_PER_DAY),
+        anthropic_fallbacks=os.environ.get("ANTHROPIC_FALLBACKS", "").strip() != "0",
     )

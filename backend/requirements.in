@@ -13,3 +13,10 @@ qrcode==8.2  # SVG 출력만 사용 → Pillow 불필요
 # 제목 미리보기(Phase 5): 연결은 httpcore 를 직접 쓰고(검사한 IP로 고정), 인증서 묶음은 certifi.
 httpcore==1.0.9
 certifi==2026.10.23
+# AI 기능 (Phase 7): Claude API 공식 SDK (자체 HTTP 클라이언트 httpx2 로 api.anthropic.com 만 호출).
+anthropic==2.12.0
+# 본문 추출(Phase 7): HTML 문자열 → 본문 텍스트 (브라우저 없이, lxml 기반).
+# 사용자 URL 가져오기는 app/fetch.py 만 쓰고 trafilatura 의 내장 가져오기(urllib3)는 쓰지 않는다.
+trafilatura==2.3.1
+# 파싱 스레드의 동시 실행 제한(CapacityLimiter)을 직접 쓴다 (FastAPI 의존성으로도 들어온다).
+anyio==4.16.0

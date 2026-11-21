@@ -50,7 +50,23 @@ function fallbackError(status: number): { code: string; message: string } {
   return { code: 'unknown', message: '요청을 처리하지 못했습니다.' }
 }
 
-export async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+export interface RequestOptions {
+  /** 취소 신호. 취소되면 ApiError(code 'aborted')로 끝난다 */
+  signal?: AbortSignal
+}
+
+/** 사용자가 취소했거나 화면을 떠나 요청을 멈춘 경우 */
+export function isAborted(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'aborted'
+}
+
+function abortedError(): ApiError {
+  return new ApiError(0, 'aborted', '요청을 취소했어요.')
+}
+
+export async function request<T>(method: string, path: string, body?: unknown, opts: RequestOptions = {}): Promise<T> {
+  const { signal } = opts
+  if (signal?.aborted) throw abortedError()
   let res: Response
   try {
     res = await fetch(BASE + path, {
@@ -59,12 +75,16 @@ export async function request<T>(method: string, path: string, body?: unknown): 
       cache: 'no-store',
       headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
     })
   } catch {
+    if (signal?.aborted) throw abortedError()
     throw new ApiError(0, 'network_error', '네트워크에 연결할 수 없습니다. 연결 상태를 확인해 주세요.')
   }
   if (res.status === 204) return undefined as T
   const data: unknown = await res.json().catch(() => null)
+  // 본문을 읽는 도중에 취소된 경우 (응답을 쓰지 않는다)
+  if (signal?.aborted) throw abortedError()
   if (!res.ok) {
     const err = (data as { error?: { code?: unknown; message?: unknown } } | null)?.error
     const fb = fallbackError(res.status)
@@ -82,10 +102,15 @@ export function isApiError(err: unknown, ...codes: string[]): err is ApiError {
   return err instanceof ApiError && (codes.length === 0 || codes.includes(err.code))
 }
 
-/** "3분 20초" 형식 */
+/** "3분 20초", "2시간 5분" 형식 (1시간 이상이면 초는 뺀다) */
 export function formatWait(seconds: number): string {
   const s = Math.max(0, Math.ceil(seconds))
   if (s < 60) return `${s}초`
+  if (s >= 3600) {
+    const h = Math.floor(s / 3600)
+    const m = Math.floor((s % 3600) / 60)
+    return m ? `${h}시간 ${m}분` : `${h}시간`
+  }
   const m = Math.floor(s / 60)
   const r = s % 60
   return r ? `${m}분 ${r}초` : `${m}분`
@@ -108,6 +133,8 @@ export function errorMessage(err: unknown): string {
       return '요청 출처가 서버 설정과 맞지 않습니다. 주소창의 주소로 다시 접속해 주세요.'
     case 'payload_too_large':
       return '내용이 너무 길어서 저장할 수 없어요. 메모를 줄여 주세요.'
+    case 'ai_unavailable':
+      return AI_UNAVAILABLE_MSG
     case 'db_unavailable':
     case 'internal_error':
     case 'service_unavailable':
@@ -116,4 +143,25 @@ export function errorMessage(err: unknown): string {
     default:
       return err.message
   }
+}
+
+export const AI_UNAVAILABLE_MSG = 'AI 기능을 사용할 수 없어요 (서버 설정 필요)'
+
+/**
+ * AI 요청(/ai/extract, /ai/search)의 오류 문구 (docs/API.md "AI 세부 규칙 → 프론트 표시").
+ * - 503 ai_unavailable → 서버 설정 필요 안내
+ * - 503 ai_quota_exceeded → 서버 message (월 사용 한도 도달. Retry-After 없음 → 다시 시도 안내 없이 표시)
+ * - 502 ai_failed → 서버 message 그대로
+ * - 413 payload_too_large (AI 채우기) → 붙여넣은 본문이 너무 김
+ * - 429 → 서버 message만 돌려준다. 남은 시간은 화면이 Retry-After 기준으로 따로 센다 (AiErrorNotice)
+ */
+export function aiErrorMessage(err: unknown, op: 'extract' | 'search'): string {
+  if (err instanceof ApiError) {
+    if (err.code === 'ai_unavailable') return AI_UNAVAILABLE_MSG
+    if (err.code === 'ai_failed') return err.message
+    if (err.code === 'ai_quota_exceeded') return err.message
+    if (err.code === 'payload_too_large' && op === 'extract') return '붙여넣은 본문이 너무 길어요.'
+    if (err.status === 429) return err.message
+  }
+  return errorMessage(err)
 }

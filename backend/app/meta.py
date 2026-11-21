@@ -3,7 +3,8 @@
 세션 필수 상위 라우터(app/routing.py) 아래에 붙는다 → 로그인한 사용자만 서버가 외부 주소를 가져오게
 할 수 있다. 가져오기 자체의 규칙은 app/preview.py.
 
-- 이 엔드포인트만 IP별 분당 20회 상한을 따로 둔다 (공통 상한보다 낮음).
+- IP별 분당 20회 상한을 따로 둔다 (공통 상한보다 낮음). AI로 채우기의 페이지 가져오기와 합산한다
+  (`app.state.fetch_limiter`).
   넘으면 429 `too_many_requests` + `Retry-After`.
 - DB 연결은 출처 판별 직전에 열고 바로 닫는다
   (최대 5초 걸리는 가져오기 동안 연결을 들고 있지 않는다).
@@ -42,7 +43,7 @@ def _detect_source(database: Database, url: str) -> int:
 
 @router.post("/preview")
 async def preview(body: PreviewBody, request: Request) -> dict[str, object]:
-    limiter: RequestRateLimiter = request.app.state.preview_limiter
+    limiter: RequestRateLimiter = request.app.state.fetch_limiter
     retry_after = limiter.hit(client_key(request.client.host if request.client else None))
     if retry_after is not None:
         raise ApiError(

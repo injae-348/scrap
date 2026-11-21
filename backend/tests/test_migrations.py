@@ -179,4 +179,6 @@ def test_rollback_to_code_without_0003(make_client, clock, tmp_path: Path, monke
         versions = [r[0] for r in conn.execute("SELECT version FROM schema_migrations")]
     finally:
         conn.close()
-    assert versions == [1, 2, 3]  # 구 코드는 3번을 다시 적용하거나 지우지 않는다
+    # 구 코드는 3번 이후(새 코드가 적용한 번호)를 다시 적용하거나 지우지 않는다
+    assert versions == [v for v, _, _ in list_migrations()]
+    assert versions[:3] == [1, 2, 3]

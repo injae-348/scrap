@@ -192,6 +192,37 @@ def _load_scrap(conn: sqlite3.Connection, scrap_id: int) -> dict[str, object]:
     return _serialize(conn, [row])[0]
 
 
+def search_list_items(
+    conn: sqlite3.Connection, words: list[str], limit: int
+) -> list[dict[str, object]]:
+    """검색어 단어(`parse_query` 결과)로 찾은 `ScrapListItem` 최신순 최대 `limit`개.
+
+    목록 `GET /scraps?q=`와 같은 검색 조건(`search_conditions`)을 쓴다 (AI 검색 도구용).
+    """
+    clauses, params = search_conditions(words)
+    sql = (
+        f"SELECT {_LIST_COLUMNS} FROM scraps s JOIN sources src ON src.id = s.source_id"  # noqa: S608
+        + (" WHERE " + " AND ".join(clauses) if clauses else "")
+        + " ORDER BY s.created_at DESC, s.id DESC LIMIT ?"
+    )
+    rows = conn.execute(sql, [*params, limit]).fetchall()
+    return _serialize(conn, rows, preview=True)
+
+
+def list_items_by_id(conn: sqlite3.Connection, ids: list[int]) -> dict[int, dict[str, object]]:
+    """id → `ScrapListItem`. 없는(지워진) id는 빠진다."""
+    ids = [i for i in dict.fromkeys(ids) if id_in_range(i)]
+    if not ids:
+        return {}
+    marks = ",".join("?" * len(ids))
+    rows = conn.execute(
+        f"SELECT {_LIST_COLUMNS} FROM scraps s JOIN sources src ON src.id = s.source_id"  # noqa: S608
+        f" WHERE s.id IN ({marks})",
+        ids,
+    ).fetchall()
+    return {int(item["id"]): item for item in _serialize(conn, rows, preview=True)}
+
+
 # ── 목록 쿼리 매개변수 ────────────────────────────────
 
 

@@ -160,3 +160,90 @@ describe('MarkdownRenderer: 일반 마크다운', () => {
     expectInert(c)
   })
 })
+
+describe('MarkdownRenderer: 링크 옆 실제 호스트', () => {
+  it('글자 링크 옆에 실제 호스트를 링크 밖에 작게 보여 준다', () => {
+    const c = renderMd('[공식 문서](https://docs.example.com/guide)')
+    const a = c.querySelector('a')!
+    expect(a.textContent).toBe('공식 문서')
+    const host = c.querySelector('[data-link-host]')!
+    expect(host.textContent).toBe('(docs.example.com)')
+    expect(a.contains(host)).toBe(false)
+    expect(host.getAttribute('data-link-host')).toBe('')
+    expectInert(c)
+  })
+
+  it('주소처럼 생긴 글자와 실제 호스트가 다르면 경고한다', () => {
+    const c = renderMd('[https://bank.example.com](https://evil.example/login)')
+    const host = c.querySelector('[data-link-host]')!
+    expect(host.getAttribute('data-link-host')).toBe('mismatch')
+    expect(host.textContent).toContain('글자와 다른 주소')
+    expect(host.textContent).toContain('evil.example')
+    expectInert(c)
+  })
+
+  it('스킴 없는 도메인 글자도 다르면 경고', () => {
+    const c = renderMd('[bank.example.com](https://evil.example)')
+    expect(c.querySelector('[data-link-host="mismatch"]')).not.toBeNull()
+  })
+
+  it('강조 안의 주소 글자도 읽는다', () => {
+    const c = renderMd('[**https://bank.example.com**](https://evil.example)')
+    expect(c.querySelector('[data-link-host="mismatch"]')).not.toBeNull()
+  })
+
+  it('국제화 도메인은 퓨니코드 그대로 보여 준다', () => {
+    const c = renderMd('[은행](https://exаmple.com/)')
+    expect(c.querySelector('[data-link-host]')!.textContent).toBe('(xn--exmple-4nf.com)')
+  })
+
+  it('자동 링크처럼 글자에 같은 호스트가 있으면 반복하지 않는다', () => {
+    const c = renderMd('<https://example.com/a>\n\nhttps://example.org/b')
+    expect(c.querySelectorAll('a')).toHaveLength(2)
+    expect(c.querySelector('[data-link-host]')).toBeNull()
+  })
+
+  it('이미지 링크에도 호스트를 보여 준다', () => {
+    const c = renderMd('![설명](https://cdn.example.net/a.png)')
+    expect(c.querySelector('[data-link-host]')!.textContent).toBe('(cdn.example.net)')
+  })
+
+  it('링크가 되지 않는 스킴은 호스트도 없다', () => {
+    const c = renderMd('[https://bank.example.com](javascript:alert(1))')
+    expect(c.querySelector('a')).toBeNull()
+    expect(c.querySelector('[data-link-host]')).toBeNull()
+  })
+})
+
+describe('MarkdownRenderer: 글자 방향 서식 문자 (위장 링크)', () => {
+  it('RLO로 뒤집어 다른 주소처럼 보이게 한 링크 글자도 경고하고, 방향 문자는 남기지 않는다', () => {
+    // 화면에서는 https://good.example 처럼 보이는 뒤집힌 글자
+    const c = renderMd('[\u202Eelpmaxe.doog//:sptth](https://evil.example)\n\n[\u202Ehttps://bank.example.com](https://evil.example/x)')
+    expect(c.textContent).not.toMatch(/[\u202A-\u202E\u2066-\u2069\u200E\u200F\u061C]/)
+    const hosts = [...c.querySelectorAll('[data-link-host]')]
+    expect(hosts).toHaveLength(2)
+    // 뒤집힌 글자는 주소로 읽히지 않으므로 호스트를 보여 주고, 방향 문자를 지운 주소 글자는 경고한다
+    expect(hosts[0].textContent).toContain('evil.example')
+    expect(hosts[1].getAttribute('data-link-host')).toBe('mismatch')
+    expectInert(c)
+  })
+
+  it('링크와 호스트 표시는 각각 <bdi>로 격리한다', () => {
+    const c = renderMd('[공식 문서](https://docs.example.com/guide)')
+    const a = c.querySelector('a')!
+    expect(a.parentElement!.tagName).toBe('BDI')
+    expect(c.querySelector('[data-link-host]')!.tagName).toBe('BDI')
+  })
+
+  it('본문 텍스트의 방향 문자도 지운다 (U+061C, U+2066~2069 포함)', () => {
+    const c = renderMd('앞\u061C\u2067뒤\u2069 \u200F끝')
+    expect(c.textContent).toBe('앞뒤 끝')
+  })
+
+  it('사용자 정보 형태의 링크 글자(…@evil.example)는 호스트 표시를 생략하지 않고 경고한다', () => {
+    const c = renderMd('[https://www.good-bank.example:login;verify=true@evil.example](https://evil.example)')
+    const host = c.querySelector('[data-link-host]')!
+    expect(host.getAttribute('data-link-host')).toBe('mismatch')
+    expect(host.textContent).toContain('evil.example')
+  })
+})

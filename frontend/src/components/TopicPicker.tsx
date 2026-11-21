@@ -7,7 +7,7 @@ import { IconCheck, IconPlus, IconSparkles } from './Icons'
 import { Button, Chip } from './ui'
 import { displayText } from '../lib/text'
 
-/** 주제 다중 선택 + 새 주제 추가 + AI 추천 주제 표시 */
+/** 주제 다중 선택 + 새 주제 추가 + AI 추천 주제 표시 (AI가 제안한 새 이름은 사용자가 눌러야 만든다) */
 export function TopicPicker({
   topics,
   selected,
@@ -68,14 +68,15 @@ export function TopicPicker({
 
       {aiNewNames.length > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-accent/40 p-2.5">
-          <span className="inline-flex items-center gap-1 text-xs font-medium text-accent">
+          <span className="inline-flex w-full items-center gap-1 text-xs font-medium text-accent">
             <IconSparkles size={14} />
-            AI가 제안한 새 주제
+            새 주제 제안
+            <span className="font-normal text-muted">· 아직 없는 주제예요. 누르면 추가돼요</span>
           </span>
           {aiNewNames.map((n) => (
             <span key={n} className="inline-flex items-center gap-1">
               <Chip onClick={() => add(n, () => onDismissNewName(n))} aria-label={`새 주제 ${n} 추가`}>
-                <IconPlus size={14} />#{n}
+                <IconPlus size={14} />#{displayText(n)}
               </Chip>
               <button
                 type="button"

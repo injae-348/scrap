@@ -1,9 +1,10 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useOutletContext, useParams } from 'react-router'
 import { aiApi, metaApi } from '../api'
-import { errorMessage, isApiError } from '../api/http'
+import { errorMessage, formatWait, isApiError } from '../api/http'
 import type { AiExtractResponse, Scrap, Source, Topic } from '../api/types'
+import { AiErrorNotice, AiProgress } from '../components/AiStatus'
 import { IconClipboard, IconSparkles } from '../components/Icons'
 import { Markdown } from '../components/Markdown'
 import { PanelHeader } from '../components/PanelHeader'
@@ -11,7 +12,10 @@ import type { PanelContext } from '../components/SplitPane'
 import { TopicPicker } from '../components/TopicPicker'
 import { Badge, Button, EmptyState, ErrorState, Field, LeaveDialog, Notice, Spinner } from '../components/ui'
 import { keys, useSaveScrap, useScrap, useSources, useTopics } from '../hooks/queries'
+import { useAbortableTask } from '../hooks/useAbortableTask'
 import { useLeaveGuard } from '../hooks/useLeaveGuard'
+import { useRetryCountdown } from '../hooks/useRetryCountdown'
+import { BODY_MAX, cleanPastedBody, matchTopicSuggestions, planAiFill, type AiField } from '../lib/aiSuggest'
 import { formatDate } from '../lib/date'
 import { buildScrapCreate, buildScrapPatch, reconcileSelection, sameIds, selectionFixMessage } from '../lib/scrapForm'
 import { cx, fieldCls, inputCls, textareaCls } from '../lib/styles'
@@ -116,8 +120,6 @@ export function ScrapEditorPage() {
   )
 }
 
-type AiField = 'title' | 'memo' | 'due_date'
-
 interface AiState {
   /** 빈 칸이어서 AI 제안으로 채운 칸 */
   filled: AiField[]
@@ -196,7 +198,12 @@ function ScrapForm({
   /** 미리보기 결과로 채운 제목 (사용자가 고치면 해제) */
   const [titleFromPreview, setTitleFromPreview] = useState(false)
   const [ai, setAi] = useState<AiState>(emptyAi)
-  const [notFetched, setNotFetched] = useState(false)
+  /** 본문을 얻지 못해 AI가 답하지 못함: 'fetch' 페이지를 못 가져옴 / 'pasted' 붙여넣은 본문으로도 부족 */
+  const [notFetched, setNotFetched] = useState<'fetch' | 'pasted' | null>(null)
+  /** 응답을 적용하지 않은 이유 등 AI 채우기 안내 */
+  const [aiNotice, setAiNotice] = useState<string | null>(null)
+  /** 이 화면에서 AI 사용 한도 도달(503 ai_quota_exceeded)을 받았는지. 다시 누르는 것은 막지 않고 표시만 한다 */
+  const [aiQuotaHit, setAiQuotaHit] = useState(false)
   const [errors, setErrors] = useState<{ url?: string }>({})
   /** 마지막으로 미리보기를 요청한 주소. 늦게 온 이전 응답은 버린다 */
   const latestPreviewUrl = useRef<string>(init.url)
@@ -208,7 +215,11 @@ function ScrapForm({
     titleRef.current = title
   }, [sourceMode, title])
 
-  const extract = useMutation({ mutationFn: aiApi.extract })
+  // AI로 채우기: 수십 초(서버 상한 60초) 걸릴 수 있다. 취소할 수 있고, 화면을 떠나면 취소된다.
+  // 기다리는 동안 다른 칸은 계속 입력할 수 있다.
+  const extract = useAbortableTask()
+  const extractError = extract.state.status === 'error' ? extract.state.error : null
+  const aiWait = useRetryCountdown(extractError)
 
   const dirty =
     url.trim() !== init.url ||
@@ -286,40 +297,78 @@ function ScrapForm({
       setErrors({ url: 'AI로 채우려면 먼저 올바른 링크를 넣어 주세요.' })
       return
     }
-    setNotFetched(false)
-    extract.mutate({ url: u, text: bodyText.trim() || undefined }, { onSuccess: applyAi })
+    const text = cleanPastedBody(bodyText)
+    setNotFetched(null)
+    setAiNotice(null)
+    extract.run(
+      (signal) => aiApi.extract({ url: u, text: text || undefined }, signal),
+      // 응답이 올 때의 최신 입력값을 기준으로 적용한다 (기다리는 동안 사용자가 고친 칸을 덮어쓰지 않게)
+      (res) => {
+        setAiQuotaHit(false)
+        applyAiRef.current(res, { url: u, usedText: !!text })
+      },
+      (error) => {
+        if (isApiError(error, 'ai_quota_exceeded')) setAiQuotaHit(true)
+      },
+    )
   }
 
-  const applyAi = (res: AiExtractResponse) => {
+  const applyAi = (res: AiExtractResponse, req: { url: string; usedText: boolean }) => {
+    if (url.trim() !== req.url) {
+      setAiNotice("기다리는 동안 링크가 바뀌어서 AI 제안을 적용하지 않았어요. 다시 'AI로 채우기'를 눌러 주세요.")
+      return
+    }
     if (!res.content_fetched) {
-      setNotFetched(true)
+      // 본문 없이 온 제목은 미리보기 제목이다. 빈 칸일 때만 채운다
+      if (res.title && title.trim() === '') {
+        setTitle(res.title)
+        setTitleFromPreview(true)
+      }
+      setNotFetched(req.usedText ? 'pasted' : 'fetch')
       setBodyOpen(true)
       return
     }
     const snapshot = ai.snapshot ?? { title, memo, due, topicIds }
-    const filled: AiField[] = []
-    const pending: AiState['pending'] = {}
-    const offer = (field: AiField, value: string | null, current: string, set: (v: string) => void) => {
-      if (!value) return
-      if (current.trim() === '' || ai.filled.includes(field)) {
-        set(value)
-        filled.push(field)
-      } else if (current !== value) {
-        pending[field] = value
-      }
+    const plan = planAiFill({ title, memo, due_date: due }, ai.filled, res)
+    if (plan.apply.title !== undefined) {
+      setTitle(plan.apply.title)
+      setTitleFromPreview(false)
     }
-    offer('title', res.title, title, setTitle)
-    offer('due_date', res.due_date, due, setDue)
-    offer('memo', res.memo, memo, setMemo)
+    if (plan.apply.due_date !== undefined) setDue(plan.apply.due_date)
+    if (plan.apply.memo !== undefined) setMemo(plan.apply.memo)
 
-    const lower = (s: string) => s.trim().toLowerCase()
-    const matched = topics.filter((t) => res.topic_suggestions.some((n) => lower(n) === lower(t.name)))
-    const added = matched.map((t) => t.id).filter((tid) => !topicIds.includes(tid))
+    // 주제: 기존 주제(대소문자 무시)는 선택에 더하고, 없는 이름은 "새 주제 제안"으로만 보여 준다 (자동 생성 안 함)
+    const { matchedIds, newNames } = matchTopicSuggestions(res.topic_suggestions ?? [], topics)
+    const added = matchedIds.filter((tid) => !topicIds.includes(tid))
+
+    // 채울 것이 하나도 없으면(모두 비었거나 지금 값과 같음) 이전 제안 표시는 그대로 두고 알린다
+    const nothing =
+      Object.keys(plan.apply).length === 0 &&
+      Object.keys(plan.pending).length === 0 &&
+      added.length === 0 &&
+      newNames.length === 0
+    if (nothing) {
+      setAiNotice(
+        req.usedText
+          ? 'AI가 붙여넣은 본문에서 채울 만한 내용을 찾지 못했어요.'
+          : "AI가 이 페이지에서 채울 만한 내용을 찾지 못했어요. '본문 붙여넣기'에 내용을 넣고 다시 시도해 보세요.",
+      )
+      return
+    }
     if (added.length) setTopicIds([...topicIds, ...added])
-    const newNames = res.topic_suggestions.filter((n) => !topics.some((t) => lower(t.name) === lower(n)))
 
-    setAi({ filled, pending, suggestedTopicIds: added, newTopicNames: newNames, snapshot })
+    setAi({
+      filled: Object.keys(plan.apply) as AiField[],
+      pending: plan.pending,
+      suggestedTopicIds: added,
+      newTopicNames: newNames,
+      snapshot,
+    })
   }
+  const applyAiRef = useRef(applyAi)
+  useEffect(() => {
+    applyAiRef.current = applyAi
+  })
 
   const undoAi = () => {
     if (ai.snapshot) {
@@ -353,6 +402,7 @@ function ScrapForm({
       return { ...a, pending }
     })
 
+  const aiPending = extract.state.status === 'pending'
   const hasAiResult =
     ai.filled.length > 0 ||
     Object.keys(ai.pending).length > 0 ||
@@ -551,19 +601,46 @@ function ScrapForm({
         {/* 2. AI로 채우기 */}
         <section className="space-y-3 rounded-xl border border-line bg-subtle p-3.5">
           <div className="flex flex-wrap items-center gap-3">
-            <Button variant="secondary" onClick={runAi} loading={extract.isPending} className="bg-bg">
-              {!extract.isPending && <IconSparkles size={18} className="text-accent" />}
-              {extract.isPending ? 'AI가 읽는 중…' : 'AI로 채우기'}
+            <Button
+              variant="secondary"
+              onClick={runAi}
+              loading={aiPending}
+              disabled={aiWait > 0}
+              className="bg-bg"
+            >
+              {!aiPending && <IconSparkles size={18} className="text-accent" />}
+              {aiPending
+                ? 'AI가 읽는 중…'
+                : aiWait > 0
+                  ? `AI로 채우기 (${formatWait(aiWait)} 뒤)`
+                  : aiQuotaHit
+                    ? 'AI로 채우기 (한도 도달)'
+                    : 'AI로 채우기'}
             </Button>
             <p className="min-w-0 flex-1 text-xs text-muted">
               제목·마감일·메모·주제를 제안만 해요. 저장은 직접 눌러야 돼요.
             </p>
           </div>
 
-          {extract.isError && <Notice tone="danger">{errorMessage(extract.error)}</Notice>}
-          {notFetched && (
+          {aiPending && (
+            <AiProgress
+              label={bodyText.trim() ? 'AI가 붙여넣은 본문을 읽고 있어요…' : 'AI가 페이지를 읽고 있어요…'}
+              hint="1분 정도 걸릴 수 있어요. 기다리는 동안 다른 칸은 계속 입력해도 돼요."
+              cancelLabel="요청 취소"
+              onCancel={extract.cancel}
+            />
+          )}
+          {extract.state.status === 'cancelled' && <p className="text-sm text-muted">AI로 채우기를 취소했어요.</p>}
+          {extractError !== null && <AiErrorNotice error={extractError} op="extract" />}
+          {aiNotice && <Notice tone="warn">{aiNotice}</Notice>}
+          {notFetched === 'fetch' && (
             <Notice tone="warn">
               이 페이지의 본문을 가져오지 못했어요. 아래 '본문 붙여넣기'에 내용을 붙여넣고 다시 'AI로 채우기'를 눌러 주세요.
+            </Notice>
+          )}
+          {notFetched === 'pasted' && (
+            <Notice tone="warn">
+              붙여넣은 본문으로는 내용을 파악하지 못했어요. 본문을 더 붙여넣고 다시 'AI로 채우기'를 눌러 주세요.
             </Notice>
           )}
           {hasAiResult && (
@@ -589,13 +666,34 @@ function ScrapForm({
               본문 붙여넣기 (본문을 못 가져오는 사이트용)
             </summary>
             <textarea
+              id="ai-body"
               value={bodyText}
+              maxLength={BODY_MAX}
               onChange={(e) => setBodyText(e.target.value)}
               rows={6}
               placeholder="페이지 본문을 복사해서 붙여넣으세요. AI로 채우기에만 쓰이고 저장되지 않아요."
               aria-label="본문 붙여넣기"
+              aria-describedby="ai-body-count"
               className={cx(textareaCls, 'mt-1 bg-bg')}
             />
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
+              <span
+                id="ai-body-count"
+                className={cx('tabular-nums', bodyText.length >= BODY_MAX ? 'font-medium text-warn' : 'text-muted')}
+              >
+                {bodyText.length.toLocaleString('ko-KR')} / {BODY_MAX.toLocaleString('ko-KR')}자
+                {bodyText.length >= BODY_MAX && ' · 최대 길이예요. 넘는 부분은 들어가지 않아요.'}
+              </span>
+              {bodyText && (
+                <button
+                  type="button"
+                  onClick={() => setBodyText('')}
+                  className="ml-auto min-h-11 text-muted underline hover:text-fg lg:min-h-0"
+                >
+                  본문 지우기
+                </button>
+              )}
+            </div>
           </details>
         </section>
 
