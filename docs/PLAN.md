@@ -112,6 +112,7 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [x] 운영 배포 (2026-11-20 PR #9 병합 → 승인 → 배포 성공, 외부 health·미인증 401·본문 상한 확인. 스크랩 API 실사용 확인은 Phase 6 가입 후)
 
 ### Phase 6. 프론트 연동 + PWA
+> 결정 사항 (2026-11-21): 목록 응답은 메모 대신 `memo_preview`(앞 300자), 전문은 상세에서만 (`docs/API.md` v1.4). 목 데이터는 삭제하고 실제 API만 쓴다. 서비스워커는 새 버전을 자동 적용하지 않고 "새로고침" 안내로 묻는다(작성 중이면 확인). 리뷰: `docs/reviews/qa-6-20261121.md` (보안 리뷰는 로컬 전용).
 - [ ] Phase 1 QA에서 넘긴 것: 개발용 섹션·"목 모드" 문구 제거, 401/`/auth/status` 오류 처리, 작성 중 이탈 경고, 사이드바 주제 다중 선택 (`docs/reviews/qa-1-20261119.md`)
 - [ ] 목 데이터를 실제 API로 교체
 - [ ] manifest, 아이콘, 서비스워커 → 아이폰 홈 화면 추가 테스트
@@ -127,6 +128,8 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] AI로 채우기 (본문 추출 → Claude 구조화 출력 → 제안 표시)
 - [ ] AI 검색 (도구 호출 루프, 결과 카드)
 - [ ] (Phase 4에서 넘김) 본문 추출은 http/https 스킴만 허용
+- [ ] (Phase 6에서 넘김) `/ai/*` 404를 "준비 중"으로 바꾸는 프론트 처리 제거, AI 오류 코드 정리, `/ai/search` 결과의 `scrap` 형식(전문 또는 `ScrapListItem`) 결정
+- [ ] (Phase 6에서 넘김) 메모 속 외부 링크 옆에 실제 호스트 표시 (AI가 제안한 메모 대비)
 - [ ] (Phase 5에서 넘김, 착수 조건) 본문 추출은 제목 미리보기의 안전한 가져오기 구현을 공통 모듈로 분리해 재사용 (다른 HTTP 클라이언트 사용 금지), HTML 파싱 입력 크기 상한과 파싱 전용 동시 실행 제한
 
 ### Phase 8. 운영
@@ -138,6 +141,8 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 - [ ] (Phase 4에서 넘김) 운영 문서에 비밀값을 화면에 펼치는 진단 명령 금지 목록, 컨테이너 로그 크기 상한, (선택) compose `secrets:`로 비밀값 전달
 - [ ] (Phase 4에서 넘김) infra 규칙: 비밀값을 `--build-arg`·이미지 `ENV`로 넣지 않는다 (공개 이미지 `docker history`로 보임)
 - [ ] (Phase 5에서 넘김) 다음 compose 갱신 때: 컨테이너 로그 크기 상한, api 기동 명령에 `--loop=uvloop --http=httptools` 명시
+- [ ] (Phase 6에서 넘김) PWA 갱신: 배포마다 index.html에 빌드 식별자를 넣어 갱신 안내가 항상 뜨게 하기, 서비스워커 해제 절차를 운영 문서에 두기, (선택) 최소 프론트 버전 확인
+- [ ] (Phase 6에서 넘김) CI 보강: 프론트 의존성 취약점 검사(npm audit), 빌드 결과물 비밀값 검사를 이미지 빌드 단계에서도 실행, `VITE_` 변수 허용 목록 검사, (선택) COOP·CORP 헤더
 - [ ] (Phase 5에서 넘김) 접근 로그에서 쿼리 문자열(검색어·커서) 빼기, pip-audit 정기 실행(예: 주 1회 예약 워크플로), `scraps_fts` 무결성 확인·재구성 절차 문서화
 
 ## 도메인 (DuckDNS)

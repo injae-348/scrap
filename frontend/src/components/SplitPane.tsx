@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react'
 import { useLocation, useOutlet } from 'react-router'
+import { useAuthStatus } from '../hooks/queries'
 import { cx } from '../lib/styles'
 import { IconInbox } from './Icons'
 
@@ -18,6 +19,9 @@ export interface PanelContext {
 export function SplitPane({ list, context }: { list: ReactNode; context: PanelContext }) {
   const outlet = useOutlet(context)
   const { pathname } = useLocation()
+  const status = useAuthStatus()
+  // 세션 만료 상태에서는 목록을 그리지 않고 열린 편집 패널만 남긴다
+  const expired = !!status.data?.expired && !status.data.logged_in
   const panelOpen = !!outlet && pathname.includes('/scraps/')
 
   return (
@@ -26,10 +30,10 @@ export function SplitPane({ list, context }: { list: ReactNode; context: PanelCo
         aria-label="목록"
         className={cx(
           'lg:w-[400px] lg:shrink-0 lg:overflow-y-auto lg:border-r lg:border-line xl:w-[460px]',
-          panelOpen && 'hidden lg:block',
+          expired ? 'hidden' : panelOpen && 'hidden lg:block',
         )}
       >
-        {list}
+        {expired ? null : list}
       </section>
       <section
         aria-label="상세"

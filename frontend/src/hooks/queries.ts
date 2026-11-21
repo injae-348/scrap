@@ -1,4 +1,5 @@
 import {
+  QueryClient,
   useInfiniteQuery,
   useMutation,
   useQuery,
@@ -6,37 +7,114 @@ import {
   type InfiniteData,
 } from '@tanstack/react-query'
 import { authApi, scrapsApi, sourcesApi, topicsApi } from '../api'
-import { ApiError, errorMessage } from '../api/http'
-import type { Scrap, ScrapInput, ScrapListParams, ScrapListResponse, ScrapPatch, SourceInput } from '../api/types'
+import { ApiError, errorMessage, setUnauthorizedHandler } from '../api/http'
+import type {
+  AuthStatus,
+  Scrap,
+  ScrapCreate,
+  ScrapListParams,
+  ScrapListResponse,
+  ScrapPatch,
+  SourceInput,
+} from '../api/types'
+import { setFlash } from '../lib/flash'
 import { showToast } from '../lib/toast'
 
 export const keys = {
   authStatus: ['auth', 'status'] as const,
   sessions: ['auth', 'sessions'] as const,
   scraps: ['scraps'] as const,
+  scrapLists: ['scraps', 'list'] as const,
   scrapList: (p: ScrapListParams) => ['scraps', 'list', p] as const,
   scrap: (id: number) => ['scraps', 'detail', id] as const,
   sources: ['sources'] as const,
   topics: ['topics'] as const,
 }
 
-export const PAGE_SIZE = 15
-
-export function useAuthStatus() {
-  return useQuery({ queryKey: keys.authStatus, queryFn: authApi.status, staleTime: 60_000 })
+/** 화면 쪽에서 쓰는 인증 상태. expired는 사용 중 세션이 만료된 경우(프론트 전용 표시) */
+export type ClientAuthStatus = AuthStatus & {
+  expired?: boolean
+  /** 만료 뒤에도 401이 올 때마다 늘린다 (화면이 다시 로그인으로 보내게) */
+  expiredSeq?: number
 }
 
-export function useScrapList(p: Omit<ScrapListParams, 'cursor' | 'limit'>) {
-  return useInfiniteQuery({
-    queryKey: keys.scrapList(p),
-    queryFn: ({ pageParam }) => scrapsApi.list({ ...p, cursor: pageParam ?? undefined, limit: PAGE_SIZE }),
-    initialPageParam: null as string | null,
-    getNextPageParam: (last) => last.next_cursor,
+/** 네트워크 오류·일시적 서버 오류만 한 번 더 시도한다 (401·400 같은 응답은 다시 보내도 같다) */
+function shouldRetry(failureCount: number, err: unknown): boolean {
+  if (failureCount >= 1) return false
+  if (!(err instanceof ApiError)) return false
+  return err.status === 0 || err.status === 502 || err.status === 503 || err.status === 504
+}
+
+export function createQueryClient(): QueryClient {
+  const qc = new QueryClient({
+    defaultOptions: {
+      queries: { retry: shouldRetry, refetchOnWindowFocus: false },
+      mutations: { retry: false },
+    },
+  })
+  // 401 unauthorized(세션 없음·만료) → 로그인 필요 상태로 바꾼다. 화면 이동은 AppLayout이 맡는다
+  // (작성 중인 내용이 있으면 이탈 경고를 거친다).
+  // 캐시는 여기서 비우지 않는다 (편집 화면이 로딩으로 바뀌어 작성 중인 내용이 사라지지 않게). 로그인 화면이 비운다.
+  setUnauthorizedHandler(() => {
+    const prev = qc.getQueryData<ClientAuthStatus>(keys.authStatus)
+    if (prev && !prev.logged_in && !prev.expired) return
+    qc.setQueryData<ClientAuthStatus>(keys.authStatus, {
+      setup_required: false,
+      logged_in: false,
+      expired: true,
+      expiredSeq: (prev?.expiredSeq ?? 0) + 1,
+    })
+  })
+  return qc
+}
+
+/** 로그인·로그아웃 때 이전 사용자의 캐시(스크랩·출처·주제·기기 목록)를 비운다 */
+export function clearPrivateCache(qc: QueryClient) {
+  qc.removeQueries({ predicate: (q) => !(q.queryKey[0] === 'auth' && q.queryKey[1] === 'status') })
+}
+
+export function useAuthStatus() {
+  const qc = useQueryClient()
+  return useQuery<ClientAuthStatus>({
+    queryKey: keys.authStatus,
+    queryFn: async () => {
+      const s = await authApi.status()
+      // 사용 중 만료된 상태에서 다시 확인해도 여전히 로그아웃이면 만료 표시를 유지한다
+      // (남겨 둔 편집 화면이 일반 로그아웃 처리로 바로 사라지지 않게).
+      // 로그인 상태였는데 다시 확인해 보니 로그아웃이면(재연결 뒤 세션 만료 등) 401과 같은 만료 경로로 처리한다.
+      // 처음 방문(이전 값 없음)과 직접 로그아웃(useSignedOut이 logged_in:false로 써 둠)은 만료로 보지 않는다.
+      const prev = qc.getQueryData<ClientAuthStatus>(keys.authStatus)
+      if (!s.logged_in && !s.setup_required) {
+        if (prev?.expired) return { ...s, expired: true, expiredSeq: prev.expiredSeq }
+        if (prev?.logged_in) return { ...s, expired: true, expiredSeq: (prev.expiredSeq ?? 0) + 1 }
+      }
+      return s
+    },
+    staleTime: 60_000,
   })
 }
 
-export function useScrap(id: number) {
-  return useQuery({ queryKey: keys.scrap(id), queryFn: () => scrapsApi.get(id), enabled: Number.isFinite(id) })
+/**
+ * 스크랩 목록. 필터·정렬·검색어가 queryKey에 들어가므로 바뀌면 새 목록을 처음부터 받는다 (이전 커서는 버림).
+ * 다음 페이지는 서버가 준 next_cursor를 그대로 보낸다.
+ */
+export function useScrapList(p: Omit<ScrapListParams, 'cursor' | 'limit'>) {
+  return useInfiniteQuery({
+    queryKey: keys.scrapList(p),
+    queryFn: ({ pageParam }) => scrapsApi.list({ ...p, cursor: pageParam ?? undefined }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+  })
+}
+
+/** 상세(메모 전문). 목록 데이터로 채우지 않고 항상 GET /scraps/{id}로 받는다 */
+export function useScrap(id: number, opts?: { fresh?: boolean }) {
+  return useQuery({
+    queryKey: keys.scrap(id),
+    queryFn: () => scrapsApi.get(id),
+    enabled: Number.isInteger(id) && id > 0,
+    refetchOnMount: opts?.fresh ? 'always' : true,
+  })
 }
 
 export function useSources() {
@@ -54,12 +132,12 @@ export function useSessions() {
 export function useSaveScrap() {
   const qc = useQueryClient()
   return useMutation({
-    // 생성은 POST(liked 선택), 수정은 PATCH(liked는 보내지 않음 — 좋아요는 PUT /like로만)
-    mutationFn: (v: { id: number; body: ScrapPatch } | { id?: undefined; body: ScrapInput }) =>
+    // 생성은 POST, 수정은 PATCH(바뀐 필드만, liked 없음 — 좋아요는 PUT /like로만)
+    mutationFn: (v: { id: number; body: ScrapPatch } | { id?: undefined; body: ScrapCreate }) =>
       v.id !== undefined ? scrapsApi.update(v.id, v.body) : scrapsApi.create(v.body),
     onSuccess: (saved) => {
       qc.setQueryData(keys.scrap(saved.id), saved)
-      return qc.invalidateQueries({ queryKey: ['scraps', 'list'] })
+      return qc.invalidateQueries({ queryKey: keys.scrapLists })
     },
   })
 }
@@ -70,7 +148,7 @@ export function useDeleteScrap() {
     mutationFn: (id: number) => scrapsApi.remove(id),
     onSuccess: (_, id) => {
       qc.removeQueries({ queryKey: keys.scrap(id) })
-      return qc.invalidateQueries({ queryKey: ['scraps', 'list'] })
+      return qc.invalidateQueries({ queryKey: keys.scrapLists })
     },
   })
 }
@@ -79,8 +157,8 @@ export function useDeleteScrap() {
 export function useToggleLike() {
   const qc = useQueryClient()
   const patch = (id: number, liked: boolean) => {
-    qc.setQueriesData<InfiniteData<ScrapListResponse>>({ queryKey: ['scraps', 'list'] }, (old) =>
-      old
+    qc.setQueriesData<InfiniteData<ScrapListResponse>>({ queryKey: keys.scrapLists }, (old) =>
+      old?.pages
         ? {
             ...old,
             pages: old.pages.map((pg) => ({
@@ -94,14 +172,20 @@ export function useToggleLike() {
   }
   return useMutation({
     // PUT /scraps/{id}/like { liked } — 원하는 값을 지정하므로 연타·재시도해도 결과가 같다
-    mutationFn: (s: Pick<Scrap, 'id' | 'liked'>) => scrapsApi.setLike(s.id, !s.liked),
+    mutationFn: (s: { id: number; liked: boolean }) => scrapsApi.setLike(s.id, !s.liked),
     onMutate: (s) => patch(s.id, !s.liked),
     onError: (e, s) => {
       patch(s.id, s.liked)
-      const net = e instanceof ApiError && e.status === 0
-      showToast(net ? errorMessage(e) : '좋아요를 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.', 'danger')
+      if (e instanceof ApiError && e.code === 'unauthorized') return
+      const specific = e instanceof ApiError && (e.status === 0 || e.status === 404 || e.status === 429)
+      showToast(specific ? errorMessage(e) : '좋아요를 바꾸지 못했어요. 잠시 후 다시 시도해 주세요.', 'danger')
     },
-    onSuccess: (res, s) => patch(s.id, res.liked),
+    onSuccess: (res, s) => {
+      patch(s.id, res.liked)
+      // 목록을 모두 오래된 것으로 표시한다. 지금 보이지 않는 목록(좋아요 보기 등)은 바로 다시 받고,
+      // 보고 있는 목록은 위에서 바꾼 값을 그대로 두었다가 다음에 다시 받을 때 맞춘다
+      void qc.invalidateQueries({ queryKey: keys.scrapLists, refetchType: 'inactive' })
+    },
   })
 }
 
@@ -126,14 +210,11 @@ export function useDeleteTopic() {
   return useInvalidating((id: number) => topicsApi.remove(id), [keys.topics, keys.scraps])
 }
 export function useReorderTopics() {
-  return useInvalidating((ids: number[]) => topicsApi.reorder(ids), [keys.topics])
+  return useInvalidating((ids: number[]) => topicsApi.reorder(ids), [keys.topics, keys.scraps])
 }
 
 export function useCreateSource() {
-  return useInvalidating(
-    (v: SourceInput) => sourcesApi.create(v),
-    [keys.sources],
-  )
+  return useInvalidating((v: SourceInput) => sourcesApi.create(v), [keys.sources])
 }
 export function useUpdateSource() {
   return useInvalidating(
@@ -151,18 +232,40 @@ export function useReorderSources() {
 export function useDeleteSession() {
   return useInvalidating((id: number) => authApi.deleteSession(id), [keys.sessions])
 }
-export function useLogoutAll() {
-  return useInvalidating(() => authApi.logoutAll(), [keys.sessions])
+
+/**
+ * 로그아웃 뒤: 개인 캐시를 비우고 로그인 필요 상태로 둔다 (화면 이동은 호출한 쪽).
+ * 진행 중인 상태 확인 요청은 먼저 취소한다 (로그아웃 전에 보낸 요청의 응답이 나중에 덮어쓰지 않게).
+ */
+export function useSignedOut() {
+  const qc = useQueryClient()
+  return async () => {
+    await qc.cancelQueries({ queryKey: keys.authStatus })
+    clearPrivateCache(qc)
+    qc.setQueryData<ClientAuthStatus>(keys.authStatus, { setup_required: false, logged_in: false })
+  }
 }
 
+/** 이 기기 로그아웃 */
 export function useLogout() {
-  const qc = useQueryClient()
+  const signedOut = useSignedOut()
   return useMutation({
     mutationFn: authApi.logout,
     onSuccess: () => {
-      // 로그아웃 시 캐시된 개인 데이터를 모두 비운다
-      qc.removeQueries({ predicate: (q) => q.queryKey[0] !== 'auth' })
-      return qc.invalidateQueries({ queryKey: keys.authStatus })
+      setFlash('로그아웃했어요.')
+      return signedOut()
+    },
+  })
+}
+
+/** 모든 기기 로그아웃 (현재 기기 포함) → 로그인 화면 */
+export function useLogoutAll() {
+  const signedOut = useSignedOut()
+  return useMutation({
+    mutationFn: authApi.logoutAll,
+    onSuccess: () => {
+      setFlash('모든 기기에서 로그아웃했어요. 다시 로그인해 주세요.')
+      return signedOut()
     },
   })
 }

@@ -51,8 +51,51 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Test (vitest)
+        run: npm test
+
       - name: Build
         run: npm run build
+
+      # 빌드 결과물(dist)은 공개 이미지(GHCR)와 브라우저에 그대로 나간다. 비밀값 형태가 섞였으면 실패시킨다.
+      # 공개 저장소의 공개 로그이므로 찾은 파일 이름만 출력하고, 일치한 내용은 찍지 않는다 (grep -l).
+      #   - Anthropic 키(sk-ant-...), PEM 개인 키
+      #   - 서버 비밀값 변수의 대입 형태(NAME=). 화면 문구에 변수 이름만 나오는 것은 허용한다.
+      #   - 비밀 파일 종류(.env*, 키, DB)가 public/ 등을 거쳐 dist 에 복사된 경우
+      # grep 종료 코드: 0 = 찾음(실패), 1 = 없음(통과), 그 밖 = 검사 자체 오류(실패).
+      - name: Scan build output for secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ ! -f dist/index.html ]; then
+            echo "::error::dist/index.html 이 없습니다 (빌드 결과물을 검사할 수 없음)"
+            exit 1
+          fi
+
+          status=0
+          files=$(grep -rlaE \
+            -e 'sk-ant-[A-Za-z0-9_-]{8,}' \
+            -e '-----BEGIN [A-Z ]*PRIVATE KEY-----' \
+            -e '(SESSION_SECRET|SETUP_TOKEN|ANTHROPIC_API_KEY)=' \
+            dist) || status=$?
+          if [ "$status" -eq 0 ]; then
+            echo "::error::빌드 결과물에 비밀값 형태가 있습니다. 아래 파일을 확인하세요 (내용은 출력하지 않음)."
+            printf '%s\n' "$files"
+            exit 1
+          elif [ "$status" -ne 1 ]; then
+            echo "::error::비밀값 검사 실행 오류 (grep 종료 코드 $status)"
+            exit 1
+          fi
+
+          bad_names=$(find dist \( -name '.env' -o -name '.env.*' -o -name '*.pem' -o -name '*.key' \
+            -o -name 'id_rsa*' -o -name 'id_ed25519*' -o -name '*.db' -o -name '*.sqlite*' \) -print)
+          if [ -n "$bad_names" ]; then
+            echo "::error::빌드 결과물에 비밀·데이터 파일 종류가 들어 있습니다."
+            printf '%s\n' "$bad_names"
+            exit 1
+          fi
+
+          echo "비밀값 검사 통과: $(find dist -type f | wc -l | tr -d ' ')개 파일"
 
   backend:
     # 필수 검사 이름으로 쓰이므로 바꾸지 않는다.

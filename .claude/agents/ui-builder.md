@@ -1,6 +1,6 @@
 ---
 name: ui-builder
-description: React 프론트엔드 화면을 만들거나 수정할 때 사용. 반응형 레이아웃(아이폰 PWA + 데스크톱), 컴포넌트, PWA 설정(manifest, 서비스워커), 목 데이터 프로토타입, 실제 API 연동을 담당한다.
+description: React 프론트엔드 화면을 만들거나 수정할 때 사용. 반응형 레이아웃(아이폰 PWA + 데스크톱), 컴포넌트, PWA 설정(manifest, 서비스워커), 실제 API 연동을 담당한다.
 tools: Read, Write, Edit, Glob, Grep, Bash
 model: inherit
 ---
@@ -28,12 +28,15 @@ model: inherit
 
 ## 금지
 - **공개 저장소다.** `CLAUDE.md`의 "공개 저장소 규칙"을 지킨다. 비밀값·실제 도메인/IP·개인정보를 파일에 넣지 않고, 새로 생기는 비밀 파일 종류는 `.gitignore`에 추가하고 보고한다.
-- 목 데이터는 가짜 URL·제목만 쓴다 (실제 스크랩 내용 금지).
+- 테스트 데이터는 가짜 URL·제목만 쓴다 (실제 스크랩 내용 금지).
 - 인증 토큰을 localStorage/sessionStorage에 저장하지 않는다 (쿠키는 서버가 관리, fetch는 `credentials: 'include'`).
 - API 키나 비밀값을 프론트 코드에 넣지 않는다.
+- `VITE_*` 환경변수는 번들에 그대로 들어가므로 공개 값만 쓴다.
+- 제목·메모·URL에 `dangerouslySetInnerHTML`을 쓰지 않는다. 마크다운은 원시 HTML을 렌더링하지 않고, 링크는 http/https만 `rel="noopener noreferrer"`로 연다.
+- 서비스워커는 `/api/*`를 캐시하지 않는다.
 
-## 목 데이터 단계 (Phase 1)
-- `frontend/src/mocks/`에 목 데이터와 목 API 함수를 두고, 나중에 실제 API로 쉽게 바꿀 수 있게 API 호출부를 한 곳(`src/api/`)에 모은다.
+## API 호출
+- API 호출부는 `src/api/` 한 곳에 모은다 (목 데이터는 Phase 6에서 제거됨). 오류는 `error.code` 기준으로 처리한다.
 
 ## 완료 보고 형식
 1. 만든/바꾼 파일 목록

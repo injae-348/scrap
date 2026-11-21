@@ -1,7 +1,8 @@
 import { Link, NavLink, useLocation, useSearchParams } from 'react-router'
 import { useSources, useTopics } from '../hooks/queries'
 import { cx } from '../lib/styles'
-import { IconClock, IconHeart, IconList, IconPlus, IconSettings, IconSparkles } from './Icons'
+import { IconCheck, IconClock, IconHeart, IconList, IconPlus, IconSettings, IconSparkles } from './Icons'
+import { displayText } from '../lib/text'
 
 function viewBase(pathname: string): string {
   if (pathname.startsWith('/liked')) return '/liked'
@@ -31,14 +32,31 @@ export function Sidebar() {
   const base = viewBase(pathname)
   const inBrowse = !pathname.startsWith('/search') && !pathname.startsWith('/settings')
   const activeSource = inBrowse ? Number(sp.get('source')) : NaN
-  const activeTopics = inBrowse ? (sp.get('topics') ?? '').split(',').map(Number) : []
+  const activeTopics = inBrowse
+    ? (sp.get('topics') ?? '')
+        .split(',')
+        .map(Number)
+        .filter((n) => Number.isInteger(n) && n > 0)
+    : []
 
-  const filterLink = (key: 'source' | 'topics', id: number, active: boolean) => {
-    const next = new URLSearchParams(inBrowse ? sp : undefined)
-    if (active) next.delete(key)
-    else next.set(key, String(id))
+  const toLink = (next: URLSearchParams) => {
     const qs = next.toString()
     return `${base || '/'}${qs ? '?' + qs : ''}`
+  }
+  // 출처는 하나만 고른다 (다시 누르면 해제)
+  const sourceLink = (id: number, active: boolean) => {
+    const next = new URLSearchParams(inBrowse ? sp : undefined)
+    if (active) next.delete('source')
+    else next.set('source', String(id))
+    return toLink(next)
+  }
+  // 주제는 여러 개를 함께 고른다 (모두 포함 = AND). 누를 때마다 넣었다 뺐다 한다
+  const topicLink = (id: number, active: boolean) => {
+    const next = new URLSearchParams(inBrowse ? sp : undefined)
+    const ids = active ? activeTopics.filter((x) => x !== id) : [...activeTopics, id]
+    if (ids.length) next.set('topics', ids.join(','))
+    else next.delete('topics')
+    return toLink(next)
   }
 
   return (
@@ -86,8 +104,8 @@ export function Sidebar() {
               const active = activeSource === s.id
               return (
                 <li key={s.id}>
-                  <Link to={filterLink('source', s.id, active)} className={filterCls(active)} aria-current={active || undefined}>
-                    {s.name}
+                  <Link to={sourceLink(s.id, active)} className={filterCls(active)} aria-current={active || undefined}>
+                    {displayText(s.name)}
                   </Link>
                 </li>
               )
@@ -96,15 +114,32 @@ export function Sidebar() {
         </section>
 
         <section>
-          <h2 className="px-2.5 pb-1 text-xs font-semibold text-muted">주제</h2>
+          <div className="flex items-center justify-between px-2.5 pb-1">
+            <h2 className="text-xs font-semibold text-muted">주제</h2>
+            {activeTopics.length > 0 && (
+              <Link
+                to={(() => {
+                  const next = new URLSearchParams(sp)
+                  next.delete('topics')
+                  return toLink(next)
+                })()}
+                className="text-xs text-accent hover:underline"
+              >
+                해제
+              </Link>
+            )}
+          </div>
+          {activeTopics.length > 1 && <p className="px-2.5 pb-1 text-[11px] text-muted">고른 주제가 모두 붙은 스크랩만 보여요</p>}
+          {topics.data?.length === 0 && <p className="px-2.5 text-xs text-muted">설정에서 주제를 추가할 수 있어요</p>}
           <ul className="space-y-0.5">
             {topics.data?.map((t) => {
               const active = activeTopics.includes(t.id)
               return (
                 <li key={t.id}>
-                  <Link to={filterLink('topics', t.id, active)} className={filterCls(active)} aria-current={active || undefined}>
+                  <Link to={topicLink(t.id, active)} className={filterCls(active)} aria-current={active || undefined}>
                     <span className="text-muted">#</span>
-                    {t.name}
+                    <span className="min-w-0 flex-1 truncate">{displayText(t.name)}</span>
+                    {active && <IconCheck size={14} />}
                   </Link>
                 </li>
               )

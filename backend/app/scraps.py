@@ -1,5 +1,7 @@
 """스크랩 API `/api/scraps` (docs/API.md "스크랩", v1.3 "스크랩 입력", "스크랩 목록", "검색").
 
+목록 항목은 v1.4 `ScrapListItem` (메모 대신 `memo_preview`).
+
 이 라우터는 세션 필수 상위 라우터(app/routing.py) 아래에 붙는다.
 검색 색인(scraps_fts)은 DB 트리거가 스크랩·주제 변경과 함께 맞춘다 (0003_scraps.sql).
 """
@@ -130,14 +132,27 @@ def _scrap_not_found() -> Exception:
 
 # ── 응답 만들기 ──────────────────────────────────────
 
-_SCRAP_COLUMNS = (
-    "s.id, s.url, s.title, s.memo, s.liked, s.due_date, s.created_at, s.updated_at,"
+MEMO_PREVIEW_LENGTH = 300
+
+_COMMON_COLUMNS = (
+    "s.id, s.url, s.title, s.liked, s.due_date, s.created_at, s.updated_at,"
     " s.source_id, src.name AS source_name"
 )
+# 상세·생성·수정: 메모 전문.
+_SCRAP_COLUMNS = f"{_COMMON_COLUMNS}, s.memo"
+# 목록(ScrapListItem, v1.4): 메모 앞부분만 SQL에서 잘라 온다.
+# SQLite substr()은 TEXT를 바이트가 아닌 문자 단위로 센다.
+_LIST_COLUMNS = f"{_COMMON_COLUMNS}, substr(s.memo, 1, {MEMO_PREVIEW_LENGTH}) AS memo_preview"
 
 
-def _serialize(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict[str, object]]:
-    """스크랩 행 → API 형식. 주제는 주제의 사용자 지정 순서로 붙인다."""
+def _serialize(
+    conn: sqlite3.Connection, rows: list[sqlite3.Row], *, preview: bool = False
+) -> list[dict[str, object]]:
+    """스크랩 행 → API 형식. 주제는 주제의 사용자 지정 순서로 붙인다.
+
+    `preview=True`(목록)이면 `memo` 대신 `memo_preview`를 넣는다 (행은 `_LIST_COLUMNS`로 읽는다).
+    """
+    memo_key = "memo_preview" if preview else "memo"
     topics: dict[int, list[dict[str, object]]] = {int(r["id"]): [] for r in rows}
     if rows:
         marks = ",".join("?" * len(rows))
@@ -154,7 +169,7 @@ def _serialize(conn: sqlite3.Connection, rows: list[sqlite3.Row]) -> list[dict[s
             "id": r["id"],
             "url": r["url"],
             "title": r["title"],
-            "memo": r["memo"],
+            memo_key: r[memo_key],
             "source": {"id": r["source_id"], "name": r["source_name"]},
             "topics": topics[int(r["id"])],
             "liked": bool(r["liked"]),
@@ -347,7 +362,7 @@ def list_scraps(
     )
     # 조건 문자열은 모두 이 모듈·app/search.py 의 고정 SQL 조각이고, 값은 매개변수로만 넘긴다.
     sql = (
-        f"SELECT {_SCRAP_COLUMNS} FROM scraps s JOIN sources src ON src.id = s.source_id"  # noqa: S608
+        f"SELECT {_LIST_COLUMNS} FROM scraps s JOIN sources src ON src.id = s.source_id"  # noqa: S608
         + (" WHERE " + " AND ".join(where) if where else "")
         + f" ORDER BY {order} LIMIT ?"
     )
@@ -362,7 +377,7 @@ def list_scraps(
     has_more = len(rows) > page_size
     rows = rows[:page_size]
     return {
-        "items": _serialize(conn, rows),
+        "items": _serialize(conn, rows, preview=True),
         "next_cursor": _encode_cursor(sort_by, rows[-1]) if has_more else None,
     }
 

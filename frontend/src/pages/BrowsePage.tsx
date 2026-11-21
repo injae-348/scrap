@@ -1,13 +1,15 @@
+import { useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { Link } from 'react-router'
-import { errorMessage } from '../api/http'
+import { errorMessage, isApiError } from '../api/http'
 import { IconClock, IconPlus, IconSearch } from '../components/Icons'
 import { ScrapListItem } from '../components/ScrapListItem'
 import { SplitPane } from '../components/SplitPane'
 import { Button, Chip, EmptyState, ErrorState, ListSkeleton } from '../components/ui'
-import { useScrapList, useSources, useTopics } from '../hooks/queries'
+import { keys, useScrapList, useSources, useTopics } from '../hooks/queries'
 import { useBrowseParams, VIEW_BASE, VIEW_TITLE, type View } from '../hooks/useBrowseParams'
 import { cx, inputCls } from '../lib/styles'
+import { displayText } from '../lib/text'
 
 /** 목록 화면 (전체 / 좋아요 / 마감 임박). 데스크톱에서는 오른쪽에 상세·편집 패널이 붙는다. */
 export function BrowsePage({ view }: { view: View }) {
@@ -17,6 +19,7 @@ export function BrowsePage({ view }: { view: View }) {
 }
 
 function ListPane({ view }: { view: View }) {
+  const qc = useQueryClient()
   const { filters, update, search } = useBrowseParams()
   const sources = useSources()
   const topics = useTopics()
@@ -24,14 +27,21 @@ function ListPane({ view }: { view: View }) {
   // 마감 임박 보기는 항상 마감순
   const sort = view === 'due' ? 'due' : filters.sort
 
-  const list = useScrapList({
+  // 필터·정렬·검색어가 queryKey가 되므로 바뀌면 커서 없이 처음부터 받는다
+  const params = {
     q: filters.q || undefined,
     source_id: filters.sourceId,
     topic_ids: filters.topicIds.length ? filters.topicIds : undefined,
     liked: view === 'liked' || undefined,
     due: view === 'due' ? (filters.past ? 'past' : 'upcoming') : undefined,
     sort,
-  })
+  } as const
+  const list = useScrapList(params)
+  const nextPageError: unknown = list.isFetchNextPageError ? list.error : null
+  // 받아 둔 목록이 없을 때만 오류 화면, 있으면 목록을 유지하고 위에 한 줄로 알린다
+  const fullError: unknown = list.isError && !list.data ? list.error : null
+  const refreshError: unknown = list.isError && !!list.data && !list.isFetchNextPageError ? list.error : null
+  const clearFilters = () => update({ q: '', sourceId: undefined, topicIds: [] })
 
   const items = list.data?.pages.flatMap((p) => p.items) ?? []
   const hasFilter = !!(filters.q || filters.sourceId || filters.topicIds.length)
@@ -99,14 +109,14 @@ function ListPane({ view }: { view: View }) {
           </Chip>
           {sources.data?.map((s) => (
             <Chip key={s.id} active={filters.sourceId === s.id} onClick={() => update({ sourceId: s.id })}>
-              {s.name}
+              {displayText(s.name)}
             </Chip>
           ))}
         </div>
         <div className="flex gap-2 overflow-x-auto px-4 pb-3 [scrollbar-width:none] lg:px-5" role="group" aria-label="주제 필터">
           {topics.data?.map((t) => (
             <Chip key={t.id} active={filters.topicIds.includes(t.id)} onClick={() => toggleTopic(t.id)}>
-              #{t.name}
+              #{displayText(t.name)}
             </Chip>
           ))}
           {filters.topicIds.length > 0 && (
@@ -121,17 +131,36 @@ function ListPane({ view }: { view: View }) {
         </div>
       </header>
 
+      {refreshError != null && (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-warn-soft px-4 py-1.5 text-sm lg:px-5">
+          <span className="min-w-0 flex-1">최신 목록을 불러오지 못했어요. {errorMessage(refreshError)}</span>
+          <button type="button" className="min-h-11 font-medium text-accent underline" onClick={() => void list.refetch()}>
+            다시 시도
+          </button>
+        </div>
+      )}
       {list.isPending ? (
         <ListSkeleton />
-      ) : list.isError ? (
-        <ErrorState message={errorMessage(list.error)} onRetry={() => list.refetch()} />
+      ) : fullError != null ? (
+        isApiError(fullError, 'invalid_input') ? (
+          // 같은 요청을 다시 보내도 실패하므로 재시도 대신 검색어·필터를 지우게 한다
+          <ErrorState
+            message={errorMessage(fullError)}
+            action={<Button onClick={clearFilters}>검색어·필터 지우기</Button>}
+          />
+        ) : (
+          <ErrorState
+            message={errorMessage(fullError)}
+            onRetry={() => void qc.resetQueries({ queryKey: keys.scrapList(params) })}
+          />
+        )
       ) : items.length === 0 ? (
         hasFilter ? (
           <EmptyState
             title="조건에 맞는 스크랩이 없어요"
             description="필터를 바꾸거나 해제해 보세요."
             action={
-              <Button onClick={() => update({ q: '', sourceId: undefined, topicIds: [] })}>필터 모두 해제</Button>
+              <Button onClick={clearFilters}>필터 모두 해제</Button>
             }
           />
         ) : view === 'liked' ? (
@@ -162,17 +191,25 @@ function ListPane({ view }: { view: View }) {
               <ScrapListItem key={s.id} scrap={s} to={`${base}/scraps/${s.id}${search}`} />
             ))}
           </ul>
-          {list.hasNextPage && (
+          {list.hasNextPage && !nextPageError && (
             <div className="flex justify-center py-4">
               <Button onClick={() => list.fetchNextPage()} loading={list.isFetchingNextPage}>
                 더 보기
               </Button>
             </div>
           )}
-          {list.isFetchNextPageError && (
-            <p role="alert" className="pb-4 text-center text-sm text-danger">
-              더 불러오지 못했습니다.
-            </p>
+          {nextPageError && (
+            <div role="alert" className="flex flex-col items-center gap-2 px-4 pb-4 text-center text-sm text-danger">
+              <p>더 불러오지 못했어요. {errorMessage(nextPageError)}</p>
+              {isApiError(nextPageError, 'invalid_input') ? (
+                // 커서가 더는 맞지 않으면(목록이 바뀜 등) 처음부터 다시 받는다
+                <Button onClick={() => void qc.resetQueries({ queryKey: keys.scrapList(params) })}>
+                  처음부터 다시 불러오기
+                </Button>
+              ) : (
+                <Button onClick={() => list.fetchNextPage()}>다시 시도</Button>
+              )}
+            </div>
           )}
         </>
       )}
@@ -200,7 +237,8 @@ function SearchBox({ initial, onSubmit }: { initial: string; onSubmit: (q: strin
             setValue(e.target.value)
             if (e.target.value === '') onSubmit('')
           }}
-          placeholder="제목·메모·링크에서 찾기"
+          placeholder="제목·메모·링크·주제에서 찾기"
+          maxLength={200}
           aria-label="스크랩 검색"
           enterKeyHint="search"
           className={cx(inputCls, 'pl-10 bg-subtle')}

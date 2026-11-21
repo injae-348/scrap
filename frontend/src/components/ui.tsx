@@ -1,4 +1,5 @@
-import { useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ButtonHTMLAttributes, type KeyboardEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
 import { cx } from '../lib/styles'
 import { IconAlert, IconInbox } from './Icons'
 
@@ -106,12 +107,13 @@ export function Chip({
   )
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorState({ message, onRetry, action }: { message: string; onRetry?: () => void; action?: ReactNode }) {
   return (
     <div role="alert" className="flex flex-col items-center gap-3 px-6 py-16 text-center">
       <IconAlert size={32} className="text-danger" />
       <p className="text-sm text-fg">{message}</p>
       {onRetry && <Button onClick={onRetry}>다시 시도</Button>}
+      {action}
     </div>
   )
 }
@@ -206,5 +208,117 @@ export function Badge({ tone, children }: { tone: 'warn' | 'danger' | 'muted' | 
     <span className={cx('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap', cls)}>
       {children}
     </span>
+  )
+}
+
+/** 작성 중 이탈 확인 (useLeaveGuard의 blocker와 함께 쓴다). onLeave가 없으면 "나가기" 버튼을 숨긴다 */
+export function LeaveDialog(props: {
+  open: boolean
+  title?: string
+  message?: ReactNode
+  stayLabel?: string
+  leaveLabel?: string
+  onStay: () => void
+  onLeave?: () => void
+}) {
+  if (!props.open) return null
+  return <LeaveDialogBody {...props} />
+}
+
+function LeaveDialogBody({
+  title = '작성 중인 내용이 있어요',
+  message = '이 화면을 나가면 저장하지 않은 내용이 사라져요.',
+  stayLabel = '계속 작성',
+  leaveLabel = '나가기',
+  onStay,
+  onLeave,
+}: {
+  title?: string
+  message?: ReactNode
+  stayLabel?: string
+  leaveLabel?: string
+  onStay: () => void
+  onLeave?: () => void
+}) {
+  const ref = useRef<HTMLDivElement>(null)
+
+  // 열려 있는 동안 포커스를 대화상자 안에 두고, 닫히면 열기 전 위치로 돌려준다
+  // (autoFocus가 포커스를 옮기기 전에 기억해야 하므로 처음 렌더 때 읽는다)
+  const [prevFocus] = useState(() => (document.activeElement instanceof HTMLElement ? document.activeElement : null))
+  const overlayRef = useRef<HTMLDivElement>(null)
+  // 열린 동안 창 밖(body의 다른 자식: 앱 루트 등)을 inert로 만들어 포커스·클릭·Esc가 배경으로 가지 않게 한다.
+  // 원래 inert가 아니던 것만 바꾸고 닫힐 때 되돌린 뒤 포커스를 돌려준다.
+  useEffect(() => {
+    const overlay = overlayRef.current
+    const changed: Element[] = []
+    for (const el of Array.from(document.body.children)) {
+      if (!overlay || el === overlay || el.contains(overlay) || el.hasAttribute('inert')) continue
+      el.setAttribute('inert', '')
+      changed.push(el)
+    }
+    return () => {
+      for (const el of changed) el.removeAttribute('inert')
+      // 실제로 닫혀 화면에서 빠졌을 때만 포커스를 돌려준다 (개발 모드의 effect 재실행에서는 그대로 둔다)
+      if (!overlay?.isConnected && prevFocus?.isConnected) prevFocus.focus()
+    }
+  }, [prevFocus])
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onStay()
+      return
+    }
+    if (e.key !== 'Tab') return
+    const items = ref.current ? [...ref.current.querySelectorAll<HTMLElement>('button:not([disabled])')] : []
+    if (!items.length) return
+    const first = items[0]
+    const last = items[items.length - 1]
+    const active = document.activeElement
+    if (e.shiftKey && (active === first || !ref.current?.contains(active))) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && (active === last || !ref.current?.contains(active))) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
+  // 앱 루트 밖(body 바로 아래)에 그려야 앱 루트를 inert로 만들 수 있다
+  return createPortal(
+    <div
+      ref={overlayRef}
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 px-safe-4 pb-safe sm:items-center"
+    >
+      <div
+        ref={ref}
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="leave-title"
+        aria-describedby="leave-desc"
+        onKeyDown={onKeyDown}
+        className="mb-4 w-full max-w-sm space-y-4 rounded-2xl border border-line bg-bg p-5 shadow-xl sm:mb-0"
+      >
+        <div className="space-y-1.5">
+          <h2 id="leave-title" className="text-base font-semibold">
+            {title}
+          </h2>
+          <p id="leave-desc" className="text-sm text-muted">
+            {message}
+          </p>
+        </div>
+        <div className="flex justify-end gap-2">
+          {onLeave && (
+            <Button variant="ghost" className="text-danger" onClick={onLeave}>
+              {leaveLabel}
+            </Button>
+          )}
+          <Button variant="primary" autoFocus onClick={onStay}>
+            {stayLabel}
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   )
 }
