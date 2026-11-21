@@ -139,20 +139,21 @@ scraps_fts     FTS5(title, memo, url, topics) tokenize='trigram'
 
 ### Phase 8. 운영
 > 결정 사항 (2026-11-21): 외부 백업은 사용자 Mac이 매일 서버에서 가져온다(전용 SSH 키 + 강제 명령 `backup-send.sh`, 목록·받기만). 일일 백업은 age 공개키로 암호화(서버에는 수신자 공개키만, 개인키는 암호 보호 파일로 사용자가 두 곳에 보관). 서버 14개·Mac 30일 + 월간 12개월 보관. COOP·CORP 헤더는 넣고, compose `secrets:`·최소 프론트 버전 확인은 하지 않는다. AI 하루 토큰 예산 기본 1,000,000(`AI_TOKENS_PER_DAY`), 하루 한도 초과는 429 `ai_daily_limit` (`docs/API.md` v1.6). GHCR은 커밋 SHA 버전 최근 30개 + 최근 배포 기록 SHA 보존. 운영 절차는 `deploy/README.md` 13~21절, 관리 명령은 `python -m app.admin`. 리뷰: `docs/reviews/qa-8-20261121.md` (보안 리뷰는 로컬 전용).
-- [ ] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업
-- [ ] 운영 절차 문서화 (`deploy/README.md`: 수동 롤백, 백업 복원, 비밀값 교체)
-- [ ] CI 배포 키 정기 교체 절차, GHCR 옛 이미지 보존 기간 정책
-- [ ] (Phase 4에서 넘김) 외부로 복사하는 백업은 암호화 필수 (DB에 인증 정보 포함), WAL 모드에 맞춘 백업·복원
-- [ ] (Phase 4에서 넘김) 계정 복구 절차 (인증 앱과 복구 코드를 모두 잃은 경우)
-- [ ] (Phase 4에서 넘김) 운영 문서에 비밀값을 화면에 펼치는 진단 명령 금지 목록, 컨테이너 로그 크기 상한, (선택) compose `secrets:`로 비밀값 전달
-- [ ] (Phase 4에서 넘김) infra 규칙: 비밀값을 `--build-arg`·이미지 `ENV`로 넣지 않는다 (공개 이미지 `docker history`로 보임)
-- [ ] (Phase 5에서 넘김) 다음 compose 갱신 때: 컨테이너 로그 크기 상한, api 기동 명령에 `--loop=uvloop --http=httptools` 명시
-- [ ] (Phase 6에서 넘김) PWA 갱신: 배포마다 index.html에 빌드 식별자를 넣어 갱신 안내가 항상 뜨게 하기, 서비스워커 해제 절차를 운영 문서에 두기, (선택) 최소 프론트 버전 확인
-- [ ] (Phase 6에서 넘김) CI 보강: 프론트 의존성 취약점 검사(npm audit), 빌드 결과물 비밀값 검사를 이미지 빌드 단계에서도 실행, `VITE_` 변수 허용 목록 검사, (선택) COOP·CORP 헤더
-- [ ] (Phase 7에서 넘김) 운영 문서: `ANTHROPIC_API_KEY` 교체 절차(비밀값 교체에 포함), Console 월 지출 한도 확인, 모델·AI 요청 한도 조정 방법, `ai_usage_days`로 사용량 보는 법
-- [ ] (Phase 7에서 넘김) AI 하루 토큰 예산(응답의 사용량 기준), AI 메모 제안 속 링크를 서버에서도 정리
-- [ ] (Phase 7에서 넘김) 배포 후 api 컨테이너 메모리 사용량 확인 (AI 라이브러리 추가분), 프론트 의존성 경고(Dependabot) 정리
-- [ ] (Phase 5에서 넘김) 접근 로그에서 쿼리 문자열(검색어·커서) 빼기, pip-audit 정기 실행(예: 주 1회 예약 워크플로), `scraps_fts` 무결성 확인·재구성 절차 문서화
+- [x] SQLite 자동 백업 (cron + `sqlite3 .backup`, 외부로 복사), 배포 직전 자동 백업 (매일 03:30 KST, api 컨테이너 안 Python backup API → gzip → age, 서버 14개 · Mac 수신 `deploy/README.md` 13·14절, 2026-11-21 서버·Mac 설치 확인)
+- [x] 운영 절차 문서화 (`deploy/README.md`: 수동 롤백, 백업 복원, 비밀값 교체) (12-6, 15, 16절. 2026-11-21 Mac 복원 연습 통과)
+- [x] CI 배포 키 정기 교체 절차, GHCR 옛 이미지 보존 기간 정책 (16-3 6개월마다, 21-1 월간 정리 — 2026-11-21 dry run 통과)
+- [x] (Phase 4에서 넘김) 외부로 복사하는 백업은 암호화 필수 (DB에 인증 정보 포함), WAL 모드에 맞춘 백업·복원 (age 공개키 암호화, 15절)
+- [x] (Phase 4에서 넘김) 계정 복구 절차 (인증 앱과 복구 코드를 모두 잃은 경우) (`python -m app.admin reset-2fa`·`set-password`, 19절)
+- [x] (Phase 4에서 넘김) 운영 문서에 비밀값을 화면에 펼치는 진단 명령 금지 목록, 컨테이너 로그 크기 상한, (선택) compose `secrets:`로 비밀값 전달 (17절, 로그 상한 10m×3. `secrets:`는 하지 않기로 결정)
+- [x] (Phase 4에서 넘김) infra 규칙: 비밀값을 `--build-arg`·이미지 `ENV`로 넣지 않는다 (공개 이미지 `docker history`로 보임) (17-2절, `.claude/agents/infra.md`)
+- [x] (Phase 5에서 넘김) 다음 compose 갱신 때: 컨테이너 로그 크기 상한, api 기동 명령에 `--loop=uvloop --http=httptools` 명시
+- [x] (Phase 6에서 넘김) PWA 갱신: 배포마다 index.html에 빌드 식별자를 넣어 갱신 안내가 항상 뜨게 하기, 서비스워커 해제 절차를 운영 문서에 두기, (선택) 최소 프론트 버전 확인 (`VITE_APP_BUILD_ID`, 해제 절차 20절. 최소 프론트 버전 확인은 하지 않기로 결정)
+- [x] (Phase 6에서 넘김) CI 보강: 프론트 의존성 취약점 검사(npm audit), 빌드 결과물 비밀값 검사를 이미지 빌드 단계에서도 실행, `VITE_` 변수 허용 목록 검사, (선택) COOP·CORP 헤더 (COOP·CORP 포함)
+- [x] (Phase 7에서 넘김) 운영 문서: `ANTHROPIC_API_KEY` 교체 절차(비밀값 교체에 포함), Console 월 지출 한도 확인, 모델·AI 요청 한도 조정 방법, `ai_usage_days`로 사용량 보는 법 (16-2, 18절, `app.admin ai-usage`)
+- [x] (Phase 7에서 넘김) AI 하루 토큰 예산(응답의 사용량 기준), AI 메모 제안 속 링크를 서버에서도 정리 (`AI_TOKENS_PER_DAY`, 429 `ai_daily_limit`, API.md v1.6)
+- [x] (Phase 7에서 넘김) 배포 후 api 컨테이너 메모리 사용량 확인 (AI 라이브러리 추가분), 프론트 의존성 경고(Dependabot) 정리 (2026-11-21 api 27%·web 13%, Dependabot 경고 0건)
+- [x] (Phase 5에서 넘김) 접근 로그에서 쿼리 문자열(검색어·커서) 빼기, pip-audit 정기 실행(예: 주 1회 예약 워크플로), `scraps_fts` 무결성 확인·재구성 절차 문서화 (`audit.yml` 주 1회, `app.admin fts-check`·`fts-rebuild` 19-3절)
+- [x] 운영 배포 (2026-11-21 PR #15 병합 → 서버 파일 갱신 → 승인 → 배포 성공, 컨테이너 메모리·일일 백업·Mac 수신 확인. 후속 PR #16 `backup.sh` 작업 디렉터리 수정. QA: `docs/reviews/qa-8-20261121.md`)
 
 ## 도메인 (DuckDNS)
 
