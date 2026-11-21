@@ -53,7 +53,10 @@ uv pip compile --universal --python-version 3.12 --generate-hashes requirements-
 - 런타임 코드가 직접 import하는 패키지(`httpcore`, `certifi` 등)는 `requirements.in`에 직접 적는다. `httpx`는 테스트(`TestClient`)에서만 쓰므로 `requirements-dev.in`에 있다.
 - `opentelemetry-api`는 FastAPI의 필수 의존성이라(FastAPI 내장 미들웨어가 import) 잠금 파일에 들어간다.
 - uvicorn은 `uvicorn[standard]` 대신 `uvicorn` + `httptools` + `uvloop`만 쓴다 (websockets·watchfiles·python-dotenv·PyYAML 제외). `--reload`(watchfiles)는 개발에서 필요할 때만 따로 설치한다.
-- 무거운 의존성(헤드리스 브라우저, lxml·BeautifulSoup 같은 큰 파서, 대형 ML 라이브러리)은 넣지 않는다 (1GB 서버).
+- 무거운 의존성(헤드리스 브라우저, BeautifulSoup 같은 추가 파서, 대형 ML 라이브러리)은 넣지 않는다 (1GB 서버).
+  예외: AI 본문 추출용 `trafilatura`(lxml 기반)는 Phase 7 계획대로 넣었다. 처음 쓸 때만 불러온다.
+- `anthropic`(Claude API SDK)은 자체 HTTP 클라이언트(`httpx2`)로 Anthropic API만 부른다. 이 SDK도 키가 유효하고
+  AI 요청이 처음 올 때만 불러온다 (불러오면 프로세스 메모리가 약 40MB 늘어난다).
 
 ## 환경변수
 | 이름 | 기본값 | 설명 |
@@ -66,9 +69,16 @@ uv pip compile --universal --python-version 3.12 --generate-hashes requirements-
 | `DB_PATH` | `./data/dev.db` | SQLite 파일 경로. 상위 디렉터리가 없으면 만들지 않고 `/api/health`가 503 |
 | `ENABLE_API_DOCS` | (꺼짐) | `1`이면 `/api/docs`, `/api/redoc`, `/api/openapi.json` 노출. 로컬 개발 전용 (`SITE_DOMAIN`이 있으면 기동 거부) |
 
-`ANTHROPIC_API_KEY`는 아직 사용하지 않는다 (Phase 7).
+| `ANTHROPIC_API_KEY` | (없음) | Claude API 키. 없음·`.env.example` 자리표시자(`sk-ant-xxxx`)·`sk-ant-`로 시작하지 않음 → 앱은 정상 기동, `/api/ai/*`만 503 `ai_unavailable`. 값은 설정 출력·로그·오류 응답에 넣지 않는다 |
+| `ANTHROPIC_MODEL` | `claude-opus-5-5` | AI 기능이 쓰는 모델. 형식이 틀리면 기본값 + 경고 로그 |
+| `AI_PER_MINUTE` | `10` | AI 요청(`/ai/extract`·`/ai/search` 합산) 분당 상한 (메모리). 1 이상 정수, 틀리면 기본값 |
+| `ANTHROPIC_FALLBACKS` | 켜짐 | 거부 시 Anthropic이 정한 다른 Claude 모델로 다시 처리(서버측 fallbacks 베타). 정확히 `0`이면 베타 헤더와 `fallbacks`를 모두 빼고 설정한 모델에서만 처리한다 |
+| `AI_PER_DAY` | `200` | AI 요청 하루 상한 (Asia/Seoul 날짜, DB `ai_usage_days`). 1 이상 정수, 틀리면 기본값 |
+
+`ANTHROPIC_LOG`(SDK 디버그 로그)는 운영에서 켜지 않는다.
 
 공통 요청 상한(IP별 분당 300회)은 환경변수로 바꾸지 않는다 (`app/config.py` `DEFAULT_REQUESTS_PER_MINUTE`).
+서버가 사용자 URL을 가져오는 요청(`/meta/preview`, `/ai/extract`의 페이지 가져오기)은 합쳐서 IP별 분당 20회다 (`app.state.fetch_limiter`).
 
 ## 운영 제약
 - **uvicorn 워커는 1개로 고정한다** (`--workers 1`). 가입 대기·로그인 challenge·TOTP 재설정 대기,
@@ -88,7 +98,10 @@ uv pip compile --universal --python-version 3.12 --generate-hashes requirements-
 - `app/auth/` 인증 API(`router.py`: 공개 `public_router` / 세션 필수 `router`), 세션·쿠키(`sessions.py`), 비밀번호·TOTP·복구 코드(`crypto.py`)
 - `app/scraps.py` 스크랩 CRUD·목록·좋아요, `app/search.py` 검색어 → FTS5/LIKE 조건
 - `app/sources.py` 출처 CRUD·자동 판별, `app/topics.py` 주제 CRUD, `app/ordering.py` 순서 지정
-- `app/meta.py` 제목 미리보기 API, `app/preview.py` 안전한 가져오기(IP 고정 연결·리다이렉트 검사·크기/시간 상한)·제목 추출, `app/netguard.py` 공인 IP 판정
+- `app/fetch.py` **사용자 URL 가져오기 공통 모듈** (`SafeFetcher`: IP 고정 연결·포트 80/443·공인 IP만·리다이렉트 재검사·크기/시간 상한·동시 수 제한). 사용자 URL은 이 모듈로만 가져온다 (다른 HTTP 클라이언트·trafilatura 내장 가져오기 금지, `tests/test_fetch.py`가 검사), `app/netguard.py` 공인 IP 판정
+- `app/meta.py` 제목 미리보기 API, `app/preview.py` 제목 추출(oEmbed·og:title 등)
+- `app/pagetext.py` AI로 채우기용 본문 추출 (trafilatura, HTML 문자열만 넘김. 파싱 전에 스크립트 등 블록을 덜어 내고 태그 수·입력 길이 상한을 둔다), `app/parsing.py` 파싱 전용 동시 실행 제한 (시간 초과로 기다림이 끝나도 파싱 스레드가 끝날 때까지 자리를 쥔다)
+- `app/ai/` AI API: `router.py`(`/ai/extract`·`/ai/search`), `claude.py`(Claude 호출·재시도·오류 분류, 클라이언트 지연 생성), `prompts.py`(고정 시스템 프롬프트·JSON 스키마·`search_scraps` 도구), `limits.py`(분·하루·동시 제한)
 - `app/validation.py` 공통 입력 검사 (URL 검사는 스크랩 저장과 미리보기가 같은 함수를 쓴다)
 - `app/guard.py` 요청 본문 상한(앱 1MB, 인증 불필요 경로 16KB → 413)과 세션 사전 확인(세션 필요 경로는 본문을 읽기 전에 401)
 - `app/csrf.py` Origin 검사, `app/headers.py` `/api/*` `Cache-Control: no-store`

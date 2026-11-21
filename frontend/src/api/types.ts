@@ -1,4 +1,4 @@
-// docs/API.md(v1.4)의 데이터 형식을 그대로 옮긴 타입.
+// docs/API.md(v1.5)의 데이터 형식을 그대로 옮긴 타입.
 
 export interface SourceRef {
   id: number
@@ -117,6 +117,7 @@ export interface MetaPreview {
   source_id: number
 }
 
+/** POST /ai/extract 응답 (v1.5). 저장되지 않은 제안값. topic_suggestions는 기존 주제면 실제 이름으로 정규화돼 온다 */
 export interface AiExtractResponse {
   title: string | null
   due_date: string | null
@@ -125,7 +126,8 @@ export interface AiExtractResponse {
   content_fetched: boolean
 }
 
+/** POST /ai/search 응답 (v1.5). scrap은 목록과 같은 ScrapListItem(memo_preview) */
 export interface AiSearchResponse {
   answer: string
-  results: { scrap: Scrap; reason: string }[]
+  results: { scrap: ScrapListItem; reason: string }[]
 }

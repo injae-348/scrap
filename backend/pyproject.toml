@@ -24,6 +24,8 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # 테스트에서는 assert 사용을 허용한다.
 "tests/**" = ["S101"]
+# 프롬프트 문장은 Claude에 그대로 보내는 글이라 줄 길이 규칙에서 뺀다.
+"app/ai/prompts.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

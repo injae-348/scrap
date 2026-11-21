@@ -1,245 +1,77 @@
-"""제목 미리보기용 안전한 가져오기 (docs/API.md v1.3 "제목 미리보기").
+"""제목 미리보기 (docs/API.md v1.3 "제목 미리보기").
 
-보안 규칙
-- URL 검사는 스크랩 저장과 같은 함수(`app.validation.parse_url`): http/https, 2048자, 호스트 필수,
-  사용자 정보 없음. 여기에 더해 포트는 80·443만 연결한다 (스크랩 저장은 포트 제한 없음).
-- 호스트를 DNS로 풀어 **모든** 결과가 공인 주소일 때만 진행한다 (`app.netguard.is_public_ip`).
-  연결은 검사한 IP로 직접 한다(`PinnedBackend`) → 검사와 연결 사이에 DNS 응답이 바뀌어도
-  (DNS rebinding) 검사하지 않은 주소로 가지 않는다. https의 SNI·인증서 검증은 원래 호스트 이름으로
-  한다 (httpcore가 URL의 호스트를 server_hostname으로 쓴다).
-- 리다이렉트는 자동으로 따라가지 않고 직접 최대 5번, 매번 URL 검사 + DNS 검사를 다시 한다.
-- 전체 5초 제한(DNS·대기·모든 리다이렉트 포함). 응답은 `text/html`(유튜브 oEmbed는 JSON)만,
-  본문은 앞부분 최대 1MB(압축 해제 후에도 1MB)까지만 스트리밍으로 읽는다.
-- 동시에 가져오는 수를 제한한다 (기본 2개). 자리가 나기를 기다리되 전체 제한 시간 안에서만.
-- 환경변수 프록시를 쓰지 않고(httpcore 직접 사용), 쿠키·인증 정보를 보내지 않는다.
+가져오기는 공통 모듈 `app.fetch.SafeFetcher`만 쓴다 (포트 80·443, 공인 IP만, 리다이렉트 5번 재검사,
+1MB, 동시 2개 — 규칙은 app/fetch.py). 이 모듈은 그 위에서
+- 유튜브(`youtube.com`·`youtu.be`)는 oEmbed(JSON), 그 외는 HTML에서 `og:title` → `twitter:title` →
+  `<title>` 순으로 제목을 찾는다. 전체 5초.
+- HTML 파싱은 표준 라이브러리 `html.parser`만 쓰고, 전용 동시 실행 제한(1개)으로 스레드에서
+  돌린다 (`app.parsing.run_limited`: 시간 초과로 기다림이 끝나도 파싱이 끝날 때까지 자리를 반납하지
+  않는다).
 - 실패는 예외가 아니라 None (API는 200 + `title: null`). 로그에는 URL을 남기지 않는다.
-
-HTML 파싱은 표준 라이브러리 `html.parser`만 쓴다 (1GB 서버: lxml·BeautifulSoup 없이).
 """
 
 import asyncio
-import codecs
 import json
 import logging
-import re
-import socket
 import ssl
-import threading
+import string
 import unicodedata
-import zlib
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Any
-from urllib.parse import quote, urljoin
+from urllib.parse import quote
 
-import certifi
-import httpcore
-from starlette.concurrency import run_in_threadpool
+import anyio
 
-from app.netguard import is_public_ip, parse_ip
-from app.validation import InvalidUrlError, parse_url
+from app.fetch import (
+    FETCH_FAILURES,
+    HTML_TYPES,
+    JSON_TYPES,
+    USER_AGENT,
+    BackendFactory,
+    BodyDecoder,
+    FetchError,
+    FetchLimits,
+    FetchSlots,
+    PinnedBackend,
+    Resolver,
+    SafeFetcher,
+    decode_html,
+    parse_target,
+)
+from app.parsing import run_limited
 
 logger = logging.getLogger("app")
 
-USER_AGENT = "Mozilla/5.0 (compatible; ScrapAppPreview/1.0)"
+# 다른 모듈·테스트가 쓰던 이름 (가져오기 구현은 app/fetch.py 로 옮겼다).
+__all__ = [
+    "USER_AGENT",
+    "FetchLimits",
+    "PinnedBackend",
+    "PreviewFetcher",
+    "clean_title",
+    "decode_html",
+    "extract_title",
+    "is_youtube_host",
+    "title_input",
+]
+_Decoder = BodyDecoder
+
 TITLE_MAX_LENGTH = 300
-REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+# 길이가 바뀌지 않는 소문자화 (ASCII만).
+# `str.lower()`는 일부 문자에서 길이가 바뀌어 위치가 어긋난다.
+_ASCII_LOWER = str.maketrans(string.ascii_uppercase, string.ascii_lowercase)
+
+
+def ascii_lower(value: str) -> str:
+    return value.translate(_ASCII_LOWER)
+
+
+# 제목 파싱 입력: `</head>`까지 또는 앞 256KB 중 짧은 쪽 (제목 후보는 머리말에 있다).
+TITLE_INPUT_MAX_CHARS = 256 * 1024
 YOUTUBE_HOSTS = ("youtube.com", "youtu.be")
 YOUTUBE_OEMBED = "https://www.youtube.com/oembed?format=json&url="
-HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
-ALLOWED_PORTS = frozenset({80, 443})
-JSON_TYPES = frozenset({"application/json", "text/json"})
-
-Resolver = Callable[[str, int], Awaitable[list[str]]]
-BackendFactory = Callable[[str, list[str]], httpcore.AsyncNetworkBackend]
 
 
-@dataclass(frozen=True)
-class FetchLimits:
-    total_timeout: float = 5.0
-    max_redirects: int = 5
-    max_bytes: int = 1024 * 1024
-    max_concurrent: int = 2
-
-
-class FetchError(Exception):
-    """가져오기 실패 (원인은 디버그용 짧은 문자열, URL은 넣지 않는다)."""
-
-
-# ── DNS·연결 ────────────────────────────────────────
-
-
-async def system_resolve(host: str, port: int) -> list[str]:
-    loop = asyncio.get_running_loop()
-    infos = await loop.getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    return [str(info[4][0]) for info in infos]
-
-
-class PinnedBackend(httpcore.AsyncNetworkBackend):
-    """검사를 마친 IP로만 TCP 연결하는 네트워크 백엔드.
-
-    httpcore가 넘기는 호스트 이름은 무시하고(다시 DNS를 풀지 않음) `ips`에 차례로 연결한다.
-    TLS는 반환한 스트림에서 httpcore가 원래 호스트 이름(SNI·인증서 검증)으로 시작한다.
-    """
-
-    def __init__(
-        self, host: str, ips: list[str], inner: httpcore.AsyncNetworkBackend | None = None
-    ) -> None:
-        self._host = host
-        self._ips = ips
-        self._inner = inner or httpcore.AnyIOBackend()
-
-    async def connect_tcp(
-        self,
-        host: str,
-        port: int,
-        timeout: float | None = None,
-        local_address: str | None = None,
-        socket_options: Iterable[Any] | None = None,
-    ) -> httpcore.AsyncNetworkStream:
-        if host != self._host:
-            raise httpcore.ConnectError("unexpected host")
-        last: Exception = httpcore.ConnectError("no address")
-        for ip in self._ips:
-            try:
-                return await self._inner.connect_tcp(
-                    ip,
-                    port,
-                    timeout=timeout,
-                    local_address=local_address,
-                    socket_options=socket_options,
-                )
-            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
-                last = exc
-        raise last
-
-    async def connect_unix_socket(
-        self,
-        path: str,
-        timeout: float | None = None,
-        socket_options: Iterable[Any] | None = None,
-    ) -> httpcore.AsyncNetworkStream:
-        raise httpcore.ConnectError("unix socket not allowed")
-
-    async def sleep(self, seconds: float) -> None:
-        await self._inner.sleep(seconds)
-
-
-class _Slots:
-    """동시 가져오기 수 제한. 이벤트 루프에 묶이지 않게 스레드 잠금 + 짧은 대기로 구현한다."""
-
-    def __init__(self, size: int) -> None:
-        self.size = size
-        self.in_use = 0
-        self._lock = threading.Lock()
-
-    def try_acquire(self) -> bool:
-        with self._lock:
-            if self.in_use >= self.size:
-                return False
-            self.in_use += 1
-            return True
-
-    def release(self) -> None:
-        with self._lock:
-            self.in_use -= 1
-
-
-# ── 요청 대상 ────────────────────────────────────────
-
-
-@dataclass(frozen=True)
-class _Target:
-    url: str
-    scheme: str
-    host: str  # DNS·SNI·Host 헤더용 ASCII 호스트 (IPv6는 대괄호 없이)
-    port: int
-    explicit_port: int | None
-    target: str  # 경로 + 쿼리
-
-    @property
-    def url_host(self) -> str:
-        return f"[{self.host}]" if ":" in self.host else self.host
-
-
-# 경로·쿼리에 이미 있는 퍼센트 인코딩과 예약 문자는 그대로 두고, 나머지(공백·비ASCII)만 인코딩한다.
-_SAFE_TARGET_CHARS = "/?#[]@!$&'()*+,;=:%-._~"
-
-
-def _target(url: str) -> _Target:
-    try:
-        clean, parts = parse_url(url)
-    except InvalidUrlError as exc:
-        raise FetchError("invalid url") from exc
-    scheme = parts.scheme.lower()
-    hostname = (parts.hostname or "").rstrip(".")
-    if parse_ip(hostname) is None:
-        try:
-            hostname = hostname.encode("idna").decode("ascii")
-        except UnicodeError as exc:
-            raise FetchError("bad host") from exc
-    if not hostname:
-        raise FetchError("bad host")
-    explicit_port = parts.port
-    port = explicit_port or (443 if scheme == "https" else 80)
-    if port not in ALLOWED_PORTS:
-        raise FetchError("port not allowed")
-    path = parts.path or "/"
-    target = quote(path, safe=_SAFE_TARGET_CHARS)
-    if parts.query:
-        target += "?" + quote(parts.query, safe=_SAFE_TARGET_CHARS)
-    return _Target(clean, scheme, hostname.lower(), port, explicit_port, target)
-
-
-# ── 본문 해석 ────────────────────────────────────────
-
-
-def _media_type(headers: dict[str, str]) -> tuple[str, str | None]:
-    value = headers.get("content-type", "")
-    media = value.split(";", 1)[0].strip().lower()
-    match = re.search(r"charset\s*=\s*[\"']?([A-Za-z0-9_.:-]+)", value, re.IGNORECASE)
-    return media, match.group(1) if match else None
-
-
-_META_CHARSET = re.compile(rb"<meta[^>]{0,512}?charset\s*=\s*[\"']?\s*([A-Za-z0-9_.:-]+)", re.I)
-
-
-def _normalize_charset(name: str) -> str:
-    lowered = name.strip().lower()
-    # 웹 호환(WHATWG 인코딩 표준): EUC-KR 계열은 상위 집합 cp949, latin-1 계열은 windows-1252.
-    if lowered in {"euc-kr", "euc_kr", "ks_c_5601-1987", "ks_c_5601", "korean", "windows-949"}:
-        return "cp949"
-    if lowered in {"iso-8859-1", "latin1", "latin-1", "us-ascii", "ascii"}:
-        return "cp1252"
-    return lowered
-
-
-def decode_html(body: bytes, header_charset: str | None) -> str:
-    """BOM → Content-Type charset → `<meta charset>` → UTF-8 순서로 문자셋을 정한다."""
-    for bom, enc in (
-        (codecs.BOM_UTF8, "utf-8"),
-        (b"\xff\xfe", "utf-16-le"),
-        (b"\xfe\xff", "utf-16-be"),
-    ):
-        if body.startswith(bom):
-            return body[len(bom) :].decode(enc, errors="replace")
-    candidates: list[str] = []
-    if header_charset:
-        candidates.append(header_charset)
-    match = _META_CHARSET.search(body[:4096])
-    if match:
-        meta = match.group(1).decode("ascii", "replace")
-        # 본문에 적힌 utf-16 선언은 무시한다 (HTML 표준: ASCII 호환 문서에서 utf-16 meta → utf-8).
-        if not meta.lower().startswith("utf-16"):
-            candidates.append(meta)
-    for name in candidates:
-        try:
-            return body.decode(_normalize_charset(name), errors="replace")
-        except LookupError:
-            continue
-    return body.decode("utf-8", errors="replace")
+# ── 제목 해석 ────────────────────────────────────────
 
 
 def clean_title(value: str | None) -> str | None:
@@ -296,6 +128,13 @@ class _TitleParser(HTMLParser):
             self._title_parts.append(data)
 
 
+def title_input(html: str) -> str:
+    """제목 파싱에 넘길 부분: `</head>`까지(포함) 또는 앞 `TITLE_INPUT_MAX_CHARS`자 중 짧은 쪽."""
+    head = html[:TITLE_INPUT_MAX_CHARS]
+    end = ascii_lower(head).find("</head")
+    return head if end == -1 else head[: end + len("</head>")]
+
+
 def extract_title(html: str) -> str | None:
     parser = _TitleParser()
     try:
@@ -318,40 +157,6 @@ def is_youtube_host(host: str) -> bool:
 # ── 가져오기 ────────────────────────────────────────
 
 
-class _Decoder:
-    """Content-Encoding(gzip/deflate) 해제. 해제 후 크기도 `limit`까지만 만든다."""
-
-    def __init__(self, encoding: str, limit: int) -> None:
-        enc = encoding.strip().lower()
-        if enc in ("", "identity"):
-            self._obj = None
-        elif enc in ("gzip", "x-gzip", "deflate"):
-            # 32 + MAX_WBITS: gzip·zlib 머리말을 자동 판별
-            self._obj = zlib.decompressobj(32 + zlib.MAX_WBITS)
-        else:
-            raise FetchError("unsupported encoding")
-        self.limit = limit
-        self.size = 0
-
-    def feed(self, chunk: bytes) -> tuple[bytes, bool]:
-        """(해제한 조각, 상한 도달 여부)."""
-        remaining = self.limit - self.size
-        if remaining <= 0:
-            # zlib 은 max_length=0 을 "제한 없음"으로 보므로 여기서 먼저 끊는다.
-            return b"", True
-        if self._obj is None:
-            data = chunk[:remaining]
-            full = len(chunk) >= remaining
-        else:
-            try:
-                data = self._obj.decompress(chunk, remaining)
-            except zlib.error as exc:
-                raise FetchError("bad compression") from exc
-            full = bool(self._obj.unconsumed_tail) or len(data) >= remaining
-        self.size += len(data)
-        return data, full
-
-
 class PreviewFetcher:
     """`/meta/preview`의 제목 가져오기. 앱마다 하나(`app.state.preview_fetcher`).
 
@@ -364,141 +169,43 @@ class PreviewFetcher:
         resolver: Resolver | None = None,
         backend_factory: BackendFactory | None = None,
     ) -> None:
-        self.limits = limits or FetchLimits()
-        self._resolve = resolver or system_resolve
-        self._backend_factory = backend_factory or (lambda host, ips: PinnedBackend(host, ips))
-        self._slots = _Slots(self.limits.max_concurrent)
-        # 인증서 묶음을 요청마다 읽지 않도록 한 번만 만든다 (CERT_REQUIRED + 호스트 이름 검증).
-        self._ssl_context = ssl.create_default_context(cafile=certifi.where())
+        self.fetcher = SafeFetcher(limits, resolver, backend_factory)
+        self.limits = self.fetcher.limits
+        # 제목 파싱 전용 동시 실행 제한 (본문 추출과 따로).
+        self._parse_limiter = anyio.CapacityLimiter(1)
+
+    @property
+    def _slots(self) -> FetchSlots:
+        return self.fetcher.slots
+
+    @property
+    def _ssl_context(self) -> ssl.SSLContext:
+        return self.fetcher.ssl_context
 
     async def fetch_title(self, url: str) -> str | None:
         try:
-            async with asyncio.timeout(self.limits.total_timeout), self._slot():
-                if is_youtube_host(_target(url).host):
+            async with asyncio.timeout(self.limits.total_timeout):
+                if is_youtube_host(parse_target(url).host):
                     return await self._youtube_title(url)
                 return await self._html_title(url)
-        except (
-            TimeoutError,
-            FetchError,
-            httpcore.TimeoutException,
-            httpcore.NetworkError,
-            httpcore.ProtocolError,
-            ssl.SSLError,
-            OSError,
-            UnicodeError,
-        ) as exc:
+        except FETCH_FAILURES as exc:
             # URL 은 로그에 남기지 않는다 (사용자가 저장하려는 주소).
             logger.info("제목 미리보기 실패: %s", type(exc).__name__)
         except Exception as exc:  # noqa: BLE001 — 미리보기는 실패해도 200 + null
             logger.warning("제목 미리보기 예외: %s", type(exc).__name__)
         return None
 
-    @asynccontextmanager
-    async def _slot(self) -> AsyncIterator[None]:
-        while not self._slots.try_acquire():
-            await asyncio.sleep(0.05)  # 바깥의 전체 제한 시간 안에서만 기다린다
-        try:
-            yield
-        finally:
-            self._slots.release()
-
     async def _html_title(self, url: str) -> str | None:
-        headers, body = await self._get(url, HTML_TYPES)
-        _, charset = _media_type(headers)
-        html = decode_html(body, charset)
-        return await run_in_threadpool(extract_title, html)
+        resp = await self.fetcher.fetch(url, HTML_TYPES)
+        html = decode_html(resp.body, resp.charset)
+        return await run_limited(self._parse_limiter, extract_title, title_input(html))
 
     async def _youtube_title(self, url: str) -> str | None:
-        oembed = YOUTUBE_OEMBED + quote(_target(url).url, safe="")
-        _, body = await self._get(oembed, JSON_TYPES)
+        oembed = YOUTUBE_OEMBED + quote(parse_target(url).url, safe="")
+        resp = await self.fetcher.fetch(oembed, JSON_TYPES)
         try:
-            data = json.loads(body.decode("utf-8"))
+            data = json.loads(resp.body.decode("utf-8"))
         except (UnicodeDecodeError, ValueError) as exc:
             raise FetchError("bad json") from exc
         title = data.get("title") if isinstance(data, dict) else None
         return clean_title(title) if isinstance(title, str) else None
-
-    async def _get(self, url: str, accept: frozenset[str]) -> tuple[dict[str, str], bytes]:
-        current = url
-        for _ in range(self.limits.max_redirects + 1):
-            target = _target(current)
-            ips = await self._public_ips(target)
-            status, headers, body = await self._request(target, ips, accept)
-            if status in REDIRECT_STATUSES:
-                location = headers.get("location")
-                if not location:
-                    raise FetchError("redirect without location")
-                current = urljoin(target.url, location.strip())
-                continue
-            if status != 200:
-                raise FetchError(f"status {status}")
-            return headers, body
-        raise FetchError("too many redirects")
-
-    async def _public_ips(self, target: _Target) -> list[str]:
-        literal = parse_ip(target.host)
-        if literal is not None:
-            addresses = [literal]
-        else:
-            resolved = await self._resolve(target.host, target.port)
-            addresses = [ip for ip in (parse_ip(r) for r in resolved) if ip is not None]
-            if len(addresses) != len(resolved):
-                raise FetchError("unparsable address")
-        if not addresses:
-            raise FetchError("no address")
-        if not all(is_public_ip(ip) for ip in addresses):
-            raise FetchError("non-public address")
-        # IPv4 먼저 (서버에 IPv6 경로가 없을 수 있다). 중복 제거.
-        ordered = sorted(dict.fromkeys(addresses), key=lambda ip: ip.version)
-        return [str(ip) for ip in ordered]
-
-    async def _request(
-        self, target: _Target, ips: list[str], accept: frozenset[str]
-    ) -> tuple[int, dict[str, str], bytes]:
-        limit = self.limits.max_bytes
-        timeout = self.limits.total_timeout
-        pool = httpcore.AsyncConnectionPool(
-            ssl_context=self._ssl_context,
-            network_backend=self._backend_factory(target.url_host, ips),
-            max_connections=1,
-            retries=0,
-        )
-        request_url = httpcore.URL(
-            scheme=target.scheme.encode("ascii"),
-            host=target.url_host.encode("ascii"),
-            port=target.explicit_port,
-            target=target.target.encode("ascii"),
-        )
-        request_headers = [
-            (b"User-Agent", USER_AGENT.encode("ascii")),
-            (b"Accept", b"text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.1"),
-            (b"Accept-Language", b"ko,en;q=0.8"),
-            (b"Accept-Encoding", b"gzip, deflate"),
-        ]
-        extensions = {
-            "timeout": {"connect": timeout, "read": timeout, "write": timeout, "pool": timeout},
-            # SNI·인증서 검증은 원래 호스트 이름으로 (IP 주소 URL이면 IP로 검증된다).
-            "sni_hostname": target.host,
-        }
-        async with (
-            pool,
-            pool.stream("GET", request_url, headers=request_headers, extensions=extensions) as resp,
-        ):
-            headers = {
-                k.decode("latin-1").lower(): v.decode("latin-1").strip() for k, v in resp.headers
-            }
-            if resp.status != 200:
-                return resp.status, headers, b""  # 리다이렉트·오류는 본문을 읽지 않는다
-            media, _ = _media_type(headers)
-            if media not in accept:
-                raise FetchError("unexpected content type")
-            decoder = _Decoder(headers.get("content-encoding", ""), limit)
-            parts: list[bytes] = []
-            raw_size = 0
-            async for chunk in resp.aiter_stream():
-                raw_size += len(chunk)
-                data, full = decoder.feed(chunk)
-                parts.append(data)
-                if full or raw_size >= limit:
-                    break  # 앞부분 1MB만 쓴다. 나머지는 읽지 않고 연결을 닫는다.
-            return resp.status, headers, b"".join(parts)

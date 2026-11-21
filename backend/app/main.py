@@ -15,6 +15,9 @@ from contextlib import asynccontextmanager
 from fastapi import APIRouter, FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.ai.claude import ClaudeGateway
+from app.ai.limits import AiRequestLimiter
+from app.ai.router import router as ai_router
 from app.auth.crypto import PasswordHasherBusy, TokenHasher, prepare_dummy_hash
 from app.auth.router import (
     CHALLENGE_MAX_PENDING,
@@ -36,6 +39,7 @@ from app.headers import NoStoreMiddleware
 from app.memstore import TTLStore
 from app.meta import PREVIEW_REQUESTS_PER_MINUTE
 from app.meta import router as meta_router
+from app.pagetext import PageTextFetcher
 from app.preview import PreviewFetcher
 from app.ratelimit import (
     AccountAttemptLimiter,
@@ -54,7 +58,14 @@ logger = logging.getLogger("app")
 public_router = APIRouter(prefix="/api")
 
 # 세션 필수 라우터 목록. 새 기능 라우터는 여기에 추가한다 (상위 라우터가 인증을 건다).
-PROTECTED_ROUTERS = (auth_router, scraps_router, sources_router, topics_router, meta_router)
+PROTECTED_ROUTERS = (
+    auth_router,
+    scraps_router,
+    sources_router,
+    topics_router,
+    meta_router,
+    ai_router,
+)
 
 
 @public_router.get("/health")
@@ -149,7 +160,25 @@ def create_app(settings: Settings | None = None, clock: Clock | None = None) -> 
     app.state.account_limiter = AccountAttemptLimiter(clock, app.state.db.connect)
     app.state.request_limiter = RequestRateLimiter(clock, settings.requests_per_minute)
     app.state.preview_fetcher = PreviewFetcher()
-    app.state.preview_limiter = RequestRateLimiter(clock, PREVIEW_REQUESTS_PER_MINUTE)
+    # 서버가 사용자 URL을 가져오는 요청의 IP별 분당 상한
+    # (/meta/preview 와 /ai/extract 의 가져오기 합산).
+    app.state.fetch_limiter = RequestRateLimiter(clock, PREVIEW_REQUESTS_PER_MINUTE)
+    app.state.preview_limiter = app.state.fetch_limiter  # 예전 이름
+    app.state.page_fetcher = PageTextFetcher()
+    # 키가 없거나 형식이 틀리면 AI 기능만 503 (앱은 정상 기동). 클라이언트는 처음 쓸 때 만든다.
+    app.state.ai_gateway = ClaudeGateway(
+        settings.anthropic_api_key,
+        settings.anthropic_model,
+        fallbacks=settings.anthropic_fallbacks,
+    )
+    app.state.ai_limiter = AiRequestLimiter(
+        clock, app.state.db.connect, settings.ai_per_minute, settings.ai_per_day
+    )
+    if not settings.ai_available:
+        logger.warning(
+            "ANTHROPIC_API_KEY 가 설정되지 않았습니다 (없음·자리표시자·형식 오류). "
+            "AI 기능(/api/ai/*)은 503 으로 응답합니다."
+        )
 
     register_error_handlers(app)
     app.add_exception_handler(PasswordHasherBusy, _handle_hasher_busy)

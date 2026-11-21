@@ -1,7 +1,7 @@
 // API 호출은 모두 이 파일을 거친다. 계약: docs/API.md
 // request()는 같은 출처의 /api 만 호출하고 credentials: 'include'로 세션 쿠키를 보낸다.
 
-import { ApiError, request } from './http'
+import { request } from './http'
 import type {
   AiExtractResponse,
   AiSearchResponse,
@@ -93,21 +93,13 @@ export const topicsApi = {
   reorder: (ids: number[]) => request<void>('PUT', '/topics/order', { ids }),
 }
 
-// ---------------------------------------------------------------- /api/ai (Phase 7)
-// 서버에 아직 없으면 404가 오므로 "준비 중" 오류로 바꿔 보여 준다.
-async function aiCall<T>(path: string, body: unknown): Promise<T> {
-  try {
-    return await request<T>('POST', path, body)
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 404) {
-      throw new ApiError(404, 'ai_unavailable', 'AI 기능은 아직 준비 중이에요.')
-    }
-    throw e
-  }
-}
-
+// ---------------------------------------------------------------- /api/ai
+// 수십 초 걸릴 수 있다 (서버 상한: 채우기 60초, 검색 90초). 취소·화면 이탈 때 signal로 멈춘다.
+// 오류 문구는 http.ts의 aiErrorMessage (ai_unavailable 503, ai_failed 502, too_many_requests 429, payload_too_large 413).
 export const aiApi = {
-  /** 저장하지 않는다. 제안값만 반환 */
-  extract: (body: { url: string; text?: string }) => aiCall<AiExtractResponse>('/ai/extract', body),
-  search: (body: { query: string }) => aiCall<AiSearchResponse>('/ai/search', body),
+  /** 저장하지 않는다. 제안값만 반환. text(붙여넣은 본문)가 있으면 서버는 페이지를 가져오지 않는다 */
+  extract: (body: { url: string; text?: string }, signal?: AbortSignal) =>
+    request<AiExtractResponse>('POST', '/ai/extract', body, { signal }),
+  search: (body: { query: string }, signal?: AbortSignal) =>
+    request<AiSearchResponse>('POST', '/ai/search', body, { signal }),
 }
