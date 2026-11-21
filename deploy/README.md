@@ -1026,7 +1026,7 @@ P=~/Library/LaunchAgents/local.scrap-backup.pull.plist
 mkdir -p ~/Library/LaunchAgents
 sed "s#/Users/USERNAME#$HOME#g" deploy/mac/scrap-backup.plist.example > "$P"   # 저장소 폴더에서
 chk "plist 형식 정상"             plutil -lint "$P"
-chk "자리표시자가 남지 않음"        sh -c "! grep -q USERNAME '$P'"
+chk "경로에 자리표시자가 남지 않음"  sh -c "! grep -q '/Users/USERNAME' '$P'"   # 설명 주석의 USERNAME 글자는 그대로 남는다
 launchctl bootstrap "gui/$(id -u)" "$P"
 launchctl kickstart -k "gui/$(id -u)/local.scrap-backup.pull"    # 지금 한 번 실행
 ```
