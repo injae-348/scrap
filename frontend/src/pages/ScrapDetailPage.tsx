@@ -6,10 +6,14 @@ import { LikeButton } from '../components/LikeButton'
 import { Markdown } from '../components/Markdown'
 import { PanelHeader } from '../components/PanelHeader'
 import type { PanelContext } from '../components/SplitPane'
-import { ConfirmButton, ErrorState, Notice, Spinner } from '../components/ui'
+import { ConfirmButton, EmptyState, ErrorState, Notice, Spinner } from '../components/ui'
 import { useDeleteScrap, useScrap } from '../hooks/queries'
 import { formatDate, formatDateTime } from '../lib/date'
-import { hostOf, safeHref } from '../lib/url'
+import { showToast } from '../lib/toast'
+import { safeHref } from '../lib/url'
+import { DisplayUrl } from '../components/DisplayUrl'
+import { isApiError } from '../api/http'
+import { displayText } from '../lib/text'
 
 export function ScrapDetailPage() {
   const { id } = useParams()
@@ -31,11 +35,24 @@ export function ScrapDetailPage() {
         </div>
       </>
     )
-  if (q.isError)
+  // 받아 둔 내용이 없을 때만 오류 화면. 있으면 그대로 보여 주고 위에 한 줄로 알린다
+  if (q.isError && !q.data)
     return (
       <>
         <PanelHeader backTo={listPath} />
-        <ErrorState message={errorMessage(q.error)} onRetry={() => q.refetch()} />
+        {isApiError(q.error, 'not_found', 'invalid_input') ? (
+          <EmptyState
+            title="스크랩을 찾을 수 없어요"
+            description="삭제됐거나 주소가 잘못됐어요."
+            action={
+              <Link to={listPath} className="inline-flex min-h-11 items-center rounded-lg border border-line px-4 text-sm hover:bg-hover">
+                목록으로
+              </Link>
+            }
+          />
+        ) : (
+          <ErrorState message={errorMessage(q.error)} onRetry={() => q.refetch()} />
+        )}
       </>
     )
 
@@ -60,13 +77,20 @@ export function ScrapDetailPage() {
         }
       />
 
+      {q.isError && (
+        <div role="alert" className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-warn-soft px-4 py-1.5 text-sm lg:px-8">
+          <span className="min-w-0 flex-1">최신 내용을 불러오지 못했어요. {errorMessage(q.error)}</span>
+          <button type="button" className="min-h-11 font-medium text-accent underline" onClick={() => void q.refetch()}>
+            다시 시도
+          </button>
+        </div>
+      )}
       <div className="mx-auto max-w-2xl space-y-6 px-4 py-5 pb-safe lg:px-8 lg:py-8">
         <div className="space-y-3">
           <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-            <span className="rounded bg-hover px-1.5 py-0.5 text-xs font-medium text-fg">{s.source.name}</span>
-            <span>{hostOf(s.url)}</span>
+            <span className="rounded bg-hover px-1.5 py-0.5 text-xs font-medium text-fg">{displayText(s.source.name)}</span>
           </div>
-          <h1 className="text-2xl leading-snug font-bold tracking-tight break-words">{s.title || '(제목 없음)'}</h1>
+          <h1 className="text-2xl leading-snug font-bold tracking-tight break-words">{displayText(s.title) || '(제목 없음)'}</h1>
           {s.topics.length > 0 && (
             <ul className="flex flex-wrap gap-1.5" aria-label="주제">
               {s.topics.map((t) => (
@@ -75,7 +99,7 @@ export function ScrapDetailPage() {
                     to={`${topicBase}?topics=${t.id}`}
                     className="inline-flex min-h-11 items-center rounded-full bg-accent-soft px-3 text-sm text-accent lg:min-h-8 lg:px-2.5"
                   >
-                    #{t.name}
+                    #{displayText(t.name)}
                   </Link>
                 </li>
               ))}
@@ -91,11 +115,13 @@ export function ScrapDetailPage() {
             className="flex min-h-12 items-center gap-3 rounded-lg border border-line px-4 hover:bg-hover"
           >
             <IconExternal size={18} className="shrink-0 text-accent" />
-            <span className="min-w-0 flex-1 truncate text-sm">{s.url}</span>
+            <DisplayUrl url={s.url} className="min-w-0 flex-1 truncate text-sm" />
             <span className="shrink-0 text-sm font-medium text-accent">열기</span>
           </a>
         ) : (
-          <Notice tone="warn">열 수 없는 링크 형식입니다: {s.url}</Notice>
+          <Notice tone="warn">
+            열 수 없는 링크 형식이에요: <DisplayUrl url={s.url} />
+          </Notice>
         )}
 
         {s.due_date && (
@@ -121,7 +147,14 @@ export function ScrapDetailPage() {
             confirmLabel="정말 삭제"
             icon={<IconTrash size={18} />}
             loading={del.isPending}
-            onConfirm={() => del.mutate(s.id, { onSuccess: () => navigate(listPath, { replace: true }) })}
+            onConfirm={() =>
+              del.mutate(s.id, {
+                onSuccess: () => {
+                  showToast('삭제했어요.')
+                  navigate(listPath, { replace: true })
+                },
+              })
+            }
           />
         </footer>
       </div>

@@ -5,6 +5,7 @@ import { useCreateTopic } from '../hooks/queries'
 import { cx, inputCls } from '../lib/styles'
 import { IconCheck, IconPlus, IconSparkles } from './Icons'
 import { Button, Chip } from './ui'
+import { displayText } from '../lib/text'
 
 /** 주제 다중 선택 + 새 주제 추가 + AI 추천 주제 표시 */
 export function TopicPicker({
@@ -53,7 +54,7 @@ export function TopicPicker({
           const on = selected.includes(t.id)
           return (
             <Chip key={t.id} active={on} onClick={() => toggle(t.id)}>
-              {on && <IconCheck size={14} />}#{t.name}
+              {on && <IconCheck size={14} />}#{displayText(t.name)}
               {aiSuggestedIds.includes(t.id) && <IconSparkles size={13} aria-label="AI 추천" className="text-accent" />}
             </Chip>
           )

@@ -1,39 +1,43 @@
-import ReactMarkdown, { defaultUrlTransform } from 'react-markdown'
+import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { markdownLinkHref } from '../lib/markdownLinks'
 
 /**
- * 메모 마크다운 렌더링.
- * - raw HTML은 렌더링하지 않는다 (skipHtml, rehype-raw 미사용)
- * - 링크 주소는 http/https/mailto만 허용 (javascript: 등 차단)
- * - 이미지는 외부 요청(추적)을 막기 위해 링크로만 표시
+ * 메모 마크다운 렌더링 (렌더링 안전 규칙).
+ * - 원시 HTML은 렌더링하지 않는다 (skipHtml, rehype-raw 같은 플러그인 미사용).
+ * - 링크는 http/https만 링크로 만들고 새 창 + rel="noopener noreferrer".
+ *   그 밖의 스킴(javascript:, data:, vbscript:, mailto:, 상대 경로 등)은 일반 텍스트로 보여 준다.
+ * - 이미지는 <img>로 불러오지 않는다 (외부 요청·추적 방지, 운영 CSP도 외부 이미지를 막는다). 링크로만 보여 준다.
  */
-function urlTransform(url: string): string {
-  const safe = defaultUrlTransform(url)
-  return /^(https?:|mailto:)/i.test(safe) ? safe : ''
-}
-
 export default function MarkdownRenderer({ children }: { children: string }) {
   return (
     <div className="md text-[15px] text-fg">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         skipHtml
-        urlTransform={urlTransform}
+        urlTransform={(url) => markdownLinkHref(url) ?? ''}
         components={{
-          a: ({ href, children }) =>
-            href ? (
-              <a href={href} target="_blank" rel="noopener noreferrer nofollow">
+          a: ({ href, children }) => {
+            const safe = typeof href === 'string' ? markdownLinkHref(href) : undefined
+            return safe ? (
+              <a href={safe} target="_blank" rel="noopener noreferrer">
                 {children}
               </a>
             ) : (
               <span>{children}</span>
-            ),
-          img: ({ src, alt }) =>
-            typeof src === 'string' && src ? (
-              <a href={src} target="_blank" rel="noopener noreferrer nofollow">
-                [이미지: {alt || '보기'}]
+            )
+          },
+          img: ({ src, alt }) => {
+            const safe = typeof src === 'string' ? markdownLinkHref(src) : undefined
+            const label = `[이미지: ${alt || '보기'}]`
+            return safe ? (
+              <a href={safe} target="_blank" rel="noopener noreferrer">
+                {label}
               </a>
-            ) : null,
+            ) : (
+              <span>{label}</span>
+            )
+          },
         }}
       >
         {children}

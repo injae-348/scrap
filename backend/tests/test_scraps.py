@@ -1,4 +1,4 @@
-"""스크랩 API: CRUD·좋아요·목록 필터·정렬·커서·검색·검색 색인 (docs/API.md v1.3)."""
+"""스크랩 API: CRUD·좋아요·목록 필터·정렬·커서·검색·검색 색인 (docs/API.md v1.3, 목록 항목 v1.4)."""
 
 import sqlite3
 from datetime import datetime, timedelta
@@ -21,6 +21,8 @@ SCRAP_KEYS = {
     "created_at",
     "updated_at",
 }
+# 목록 항목(ScrapListItem, v1.4): memo 대신 memo_preview.
+LIST_ITEM_KEYS = (SCRAP_KEYS - {"memo"}) | {"memo_preview"}
 
 
 def _create(client: TestClient, **body) -> dict:
@@ -303,7 +305,49 @@ def test_list_default_sort_created_desc(user: TestClient, clock: FakeClock) -> N
     page = _list(user)
     assert [s["id"] for s in page["items"]] == [c, b, a]
     assert page["next_cursor"] is None
-    assert set(page["items"][0]) == SCRAP_KEYS
+    assert set(page["items"][0]) == LIST_ITEM_KEYS
+
+
+def test_list_memo_preview(user: TestClient) -> None:
+    # 한글·영문·이모지(BMP 밖)를 섞어 문자 단위로 잘리는지 본다.
+    long_memo = ("가나다abc😀" * 60)[:299] + "끝" + "넘치는 부분" * 10
+    assert len(long_memo) > 300
+    exact = "한" * 300
+    short = "# 짧은 메모\n\n본문"
+    ids = {
+        "long": _create(user, memo=long_memo)["id"],
+        "exact": _create(user, memo=exact)["id"],
+        "short": _create(user, memo=short)["id"],
+        "empty": _create(user)["id"],
+    }
+    items = {s["id"]: s for s in _list(user, limit="100")["items"]}
+    for scrap_id in ids.values():
+        assert set(items[scrap_id]) == LIST_ITEM_KEYS
+        assert "memo" not in items[scrap_id]
+
+    preview = items[ids["long"]]["memo_preview"]
+    assert len(preview) == 300
+    assert preview == long_memo[:300]
+    assert preview.endswith("끝")
+    assert items[ids["exact"]]["memo_preview"] == exact
+    assert items[ids["short"]]["memo_preview"] == short
+    assert items[ids["empty"]]["memo_preview"] == ""
+
+    # 검색 결과 목록도 같은 형식
+    found = _list(user, q="넘치는")["items"]
+    assert [s["id"] for s in found] == [ids["long"]]
+    assert set(found[0]) == LIST_ITEM_KEYS
+    assert found[0]["memo_preview"] == long_memo[:300]
+
+    # 상세·수정 응답은 전문
+    detail = user.get(f"/api/scraps/{ids['long']}").json()
+    assert set(detail) == SCRAP_KEYS
+    assert detail["memo"] == long_memo
+    patched = user.patch(f"/api/scraps/{ids['short']}", json={"memo": long_memo + "!"})
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["memo"] == long_memo + "!"
+    after = {s["id"]: s for s in _list(user, limit="100")["items"]}
+    assert after[ids["short"]]["memo_preview"] == long_memo[:300]
 
 
 def test_list_sort_due(user: TestClient, clock: FakeClock) -> None:

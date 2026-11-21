@@ -77,7 +77,25 @@
 		file_server
 	}
 
-	# 나머지: 정적 파일 + SPA 폴백. index.html·서비스워커·manifest가 항상 최신이도록 no-cache(매번 재검증).
+	# 해시 없는 정적 파일(PWA): 서비스워커(sw.js, workbox-*.js), registerSW.js, manifest, 아이콘 등.
+	# - 없는 파일은 index.html로 대신하지 않고 404. 서비스워커가 옛 workbox-*.js 를 importScripts 하거나
+	#   precache 하다가 HTML을 JS·이미지로 받아 깨지는 것을 막는다. 앱 라우트(/scraps/:id 등)는 확장자가 없으므로 영향 없음.
+	# - /api/*, /assets/* 는 위 블록이 맡으므로 명시적으로 뺀다 (handle 정렬 순서에 기대지 않음).
+	# - 이름이 고정이라 내용이 바뀌어도 주소가 같다 → no-cache(매번 재검증).
+	# - .webmanifest 의 MIME 은 베이스 이미지의 MIME 표에 기대지 않고 명시한다.
+	@static {
+		path *.js *.mjs *.map *.webmanifest *.json *.png *.jpg *.jpeg *.webp *.gif *.ico *.svg *.txt *.xml *.css *.woff2
+		not path /api/* /assets/*
+	}
+	handle @static {
+		root * /srv
+		header Cache-Control "no-cache"
+		@manifest path *.webmanifest
+		header @manifest Content-Type "application/manifest+json"
+		file_server
+	}
+
+	# 나머지: 정적 파일 + SPA 폴백. index.html이 항상 최신이도록 no-cache(매번 재검증).
 	handle {
 		root * /srv
 		header Cache-Control "no-cache"

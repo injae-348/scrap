@@ -1,4 +1,4 @@
-// docs/API.md(v1 확정본)의 데이터 형식을 그대로 옮긴 타입.
+// docs/API.md(v1.4)의 데이터 형식을 그대로 옮긴 타입.
 
 export interface SourceRef {
   id: number
@@ -48,25 +48,36 @@ export interface ScrapListParams {
   limit?: number
 }
 
+/** GET /scraps 목록 항목 (v1.4): memo 대신 memo_preview(앞 최대 300자). 전문은 GET /scraps/{id} */
+export type ScrapListItem = Omit<Scrap, 'memo'> & { memo_preview: string }
+
 export interface ScrapListResponse {
-  items: Scrap[]
+  items: ScrapListItem[]
+  /** 다음 페이지 커서. 서버 내부 형식이므로 그대로 저장해 다시 보낸다 */
   next_cursor: string | null
 }
 
-/** POST /scraps 요청 본문 (Scrap에서 id·날짜 제외, source_id, topic_ids 사용). title이 빈 문자열이면 서버가 url로 저장 */
-export interface ScrapInput {
+/** POST /scraps 요청 본문. title이 비면 서버가 url로 저장, source_id를 빼면 서버가 자동 판별 */
+export interface ScrapCreate {
   url: string
-  title: string
-  memo: string
-  source_id: number
-  topic_ids: number[]
+  title?: string
+  memo?: string
+  source_id?: number
+  topic_ids?: number[]
   /** 선택, 기본 false */
   liked?: boolean
-  due_date: string | null
+  due_date?: string | null
 }
 
-/** PATCH /scraps/{id} 본문 — liked는 받지 않는다 (좋아요는 PUT /scraps/{id}/like로만) */
-export type ScrapPatch = Partial<Omit<ScrapInput, 'liked'>>
+/** PATCH /scraps/{id} 본문 — 바뀐 필드만. liked는 받지 않는다 (좋아요는 PUT /scraps/{id}/like로만) */
+export interface ScrapPatch {
+  url?: string
+  title?: string
+  memo?: string
+  source_id?: number
+  topic_ids?: number[]
+  due_date?: string | null
+}
 
 export interface AuthStatus {
   setup_required: boolean

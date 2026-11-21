@@ -106,12 +106,13 @@ export function Chip({
   )
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
+export function ErrorState({ message, onRetry, action }: { message: string; onRetry?: () => void; action?: ReactNode }) {
   return (
     <div role="alert" className="flex flex-col items-center gap-3 px-6 py-16 text-center">
       <IconAlert size={32} className="text-danger" />
       <p className="text-sm text-fg">{message}</p>
       {onRetry && <Button onClick={onRetry}>다시 시도</Button>}
+      {action}
     </div>
   )
 }
@@ -206,5 +207,59 @@ export function Badge({ tone, children }: { tone: 'warn' | 'danger' | 'muted' | 
     <span className={cx('inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium whitespace-nowrap', cls)}>
       {children}
     </span>
+  )
+}
+
+/** 작성 중 이탈 확인 (useLeaveGuard의 blocker와 함께 쓴다) */
+export function LeaveDialog({
+  open,
+  title = '작성 중인 내용이 있어요',
+  message = '이 화면을 나가면 저장하지 않은 내용이 사라져요.',
+  stayLabel = '계속 작성',
+  leaveLabel = '나가기',
+  onStay,
+  onLeave,
+}: {
+  open: boolean
+  title?: string
+  message?: ReactNode
+  stayLabel?: string
+  leaveLabel?: string
+  onStay: () => void
+  onLeave: () => void
+}) {
+  if (!open) return null
+  return (
+    <div
+      className="fixed inset-0 z-[60] flex items-end justify-center bg-black/40 px-safe-4 pb-safe sm:items-center"
+      onKeyDown={(e) => {
+        if (e.key === 'Escape') onStay()
+      }}
+    >
+      <div
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="leave-title"
+        aria-describedby="leave-desc"
+        className="mb-4 w-full max-w-sm space-y-4 rounded-2xl border border-line bg-bg p-5 shadow-xl sm:mb-0"
+      >
+        <div className="space-y-1.5">
+          <h2 id="leave-title" className="text-base font-semibold">
+            {title}
+          </h2>
+          <p id="leave-desc" className="text-sm text-muted">
+            {message}
+          </p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" className="text-danger" onClick={onLeave}>
+            {leaveLabel}
+          </Button>
+          <Button variant="primary" autoFocus onClick={onStay}>
+            {stayLabel}
+          </Button>
+        </div>
+      </div>
+    </div>
   )
 }

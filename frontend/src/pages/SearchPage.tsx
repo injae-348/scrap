@@ -9,6 +9,7 @@ import { SplitPane } from '../components/SplitPane'
 import { Button, EmptyState, ErrorState, Spinner } from '../components/ui'
 import { cx, inputCls } from '../lib/styles'
 import { hostOf } from '../lib/url'
+import { displayText } from '../lib/text'
 
 const EXAMPLES = ['마감 임박한 공모전 찾아줘', '도커 관련 정리 글', '보안 공부 자료 모아줘', '집에서 해 먹을 요리']
 
@@ -105,7 +106,7 @@ function SearchPane() {
         <ErrorState message={errorMessage(result.error)} onRetry={() => result.refetch()} />
       ) : result.data ? (
         <div className="space-y-4 px-4 py-5 lg:px-5" aria-live="polite">
-          <p className="text-sm leading-relaxed text-fg">{result.data.answer}</p>
+          <p className="text-sm leading-relaxed text-fg">{displayText(result.data.answer)}</p>
           {result.data.results.length === 0 ? (
             <EmptyState title="관련 스크랩이 없어요" description="다른 표현으로 다시 물어봐 주세요." />
           ) : (
@@ -116,20 +117,20 @@ function SearchPane() {
                     to={`/search/scraps/${scrap.id}?q=${encodeURIComponent(query)}`}
                     className="block rounded-xl border border-line p-4 transition hover:bg-hover"
                   >
-                    <div className="font-medium leading-snug">{scrap.title}</div>
+                    <div className="font-medium leading-snug">{displayText(scrap.title)}</div>
                     <div className="mt-1.5 flex flex-wrap items-center gap-2 text-xs text-muted">
-                      <span className="font-medium text-fg/80">{scrap.source.name}</span>
+                      <span className="font-medium text-fg/80">{displayText(scrap.source.name)}</span>
                       <span>{hostOf(scrap.url)}</span>
                       <DueBadge due={scrap.due_date} />
                       {scrap.topics.map((t) => (
                         <span key={t.id} className="text-accent">
-                          #{t.name}
+                          #{displayText(t.name)}
                         </span>
                       ))}
                     </div>
                     <p className="mt-3 flex gap-1.5 rounded-lg bg-accent-soft px-3 py-2 text-sm text-fg">
                       <IconSparkles size={15} className="mt-0.5 shrink-0 text-accent" />
-                      <span>{reason}</span>
+                      <span>{displayText(reason)}</span>
                     </p>
                   </Link>
                 </li>
